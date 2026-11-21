@@ -17,10 +17,10 @@ A browser overlay for MapleStory Classic that measures EXP and mesos per hour wh
 
 ## Tips
 - Open **Calibration** to see what the reader sees. Raise or lower *Text brightness cut* until the messages read cleanly.
-- The map name is read from the two lines at the top of the minimap (area + map). The map's picture and its monsters load automatically, with a kill counter for each.
+- The map name is read from the two lines at the top of the minimap (area + map). The map's picture and its monsters (with pictures, best drops and a kill counter) come from the built-in Classic database.
 - The EXP bar (e.g. `EXP 88,666 [4.78%]`) is read every 3 seconds; when it can be read, EXP totals come from the bar, which is exact.
 - Drag the middle of a box to move it, any corner or edge to resize. Press **Save settings for this PC** to keep your layout on that PC; **Copy settings code** moves it to another PC.
 - Paste a map's monster table (Monster · Lv · HP · EXP) from its NiaMeowDB page once to get kills per monster by name.
 
 ## Credits
-Monster pictures and fallback monster lists: [maplestory.io](https://maplestory.io). Map, monster and price data: [NiaMeowDB](https://meowdb.com/msclassic). Party EXP formula as published on NiaMeowDB (credit ohmi + azzybish). OCR: [Tesseract.js](https://github.com/naptha/tesseract.js).
+Classic map, monster, drop and picture data: [MapleClassic Wiki](https://mapleclassic.wiki), licensed [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). The overlay downloads it once into your browser as its own database (Update database refreshes it). Map links: [NiaMeowDB](https://meowdb.com/msclassic). Party EXP formula as published on NiaMeowDB (credit ohmi + azzybish). OCR: [Tesseract.js](https://github.com/naptha/tesseract.js).

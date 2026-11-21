@@ -112,6 +112,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
       </div>
       <small id="mapLearn">The map name is read from the minimap title every 4 seconds. If it can't be read, type it once; the minimap is remembered from then on.</small>
       <div id="mapPic" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:8px"><small id="dbInfo"></small><button id="bDB">Update database</button></div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -168,7 +169,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
     </div>
   </section>
 </main>
-<footer>Runs entirely in your browser: nothing is installed and your screen never leaves this computer. Map data and prices: <a href="https://meowdb.com/msclassic" target="_blank" rel="noopener">NiaMeowDB</a>. Text reading by Tesseract.js.</footer>
+<footer>Runs entirely in your browser: nothing is installed and your screen never leaves this computer. Map data and prices: <a href="https://meowdb.com/msclassic" target="_blank" rel="noopener">NiaMeowDB</a>. Text reading by Tesseract.js. Classic map and monster data: <a href="https://mapleclassic.wiki" target="_blank" rel="noopener">MapleClassic Wiki</a> (CC BY-NC-SA 4.0).</footer>
 
 <dialog id="dlg">
   <div class="row" style="justify-content:space-between"><div class="big">Session summary</div><button id="bDlgClose">Close</button></div>
@@ -301,6 +302,7 @@ $('bShare').onclick=async()=>{
   if(!ocr){
     ocr=await Tesseract.createWorker('eng',1);
     await ocr.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "});
+    Tesseract.createWorker('eng',1).then(w=>{ocr2=w}).catch(()=>{});
   }
   setStatus(state==='run'?'Running':'Ready · press Start');
   startLoop();
@@ -347,38 +349,42 @@ $('scanMs').onchange=()=>{store.set('scanMs',$('scanMs').value);if(looping)start
 $('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr2',140);$('thr').onchange=()=>store.set('thr2',$('thr').value);
 tickW.onmessage=()=>{onTick();scan()};
 
-async function scan(){
-  if(ocrBusy||!ocr||!stream)return;
-  const scanning=state==='run'; const now=performance.now();
-  const wantMap=now-lastMapAt>4000;
-  if(!scanning&&!wantMap)return;
+/* Two text readers: one only for the pickup messages (so it never misses a message while the
+   map name or EXP bar is being read), one for the map name and EXP bar. */
+let ocr2=null,side2Busy=false;
+async function scan(){scanMsgs();scanSide()}
+async function scanMsgs(){
+  if(ocrBusy||!ocr||!stream||state!=='run')return;
   ocrBusy=true;
   try{
-    const src=await grabFrame();if(!src)return;
+    const now=performance.now();const src=await grabFrame();if(!src)return;
     adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);
-    if(scanning){
-      const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
-      if(diff>1.2||now-lastOcrAt>2500){
-        lastSig=sig;lastOcrAt=now;
-        const c=cropTo(src,R.gain,OCR_SCALE,+$('thr').value);
-        const {data}=await ocr.recognize(c);
-        showCalib(c,data.text);
-        ingest(data.text);
-      }
-    }
-    if(scanning&&$('useBar').checked&&performance.now()-lastBarAt>3000){
-      lastBarAt=performance.now();
-      const c=cropTo(src,R.bar,6,0);
-      await ocr.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});
+    const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
+    if(diff>1.2||now-lastOcrAt>2500){
+      lastSig=sig;lastOcrAt=now;
+      const c=cropTo(src,R.gain,OCR_SCALE,+$('thr').value);
+      if(src.close)src.close();
       const {data}=await ocr.recognize(c);
-      await ocr.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "});
-      onBarText(data.text);
-    }
-    if(wantMap){lastMapAt=performance.now();const sig=signature(src,R.map);
-      const c=cropTo(src,R.map,4,0);const {data}=await ocr.recognize(c);
-      if(!(await onMapTitle(data.text)))onMinimap(sig);else lastMini=sig}
-    if(src.close)src.close();
+      showCalib(c,data.text);
+      ingest(data.text);
+    }else if(src.close)src.close();
   }catch(e){console.warn(e)}finally{ocrBusy=false}
+}
+async function scanSide(){
+  const w=ocr2||ocr;if(side2Busy||!w||!stream)return;
+  const now=performance.now(),wantMap=now-lastMapAt>4000,wantBar=state==='run'&&$('useBar').checked&&now-lastBarAt>3000;
+  if(!wantMap&&!wantBar)return;
+  if(!ocr2&&ocrBusy)return;
+  side2Busy=true;
+  try{
+    const src=await grabFrame();if(!src)return;
+    let cb=null,cm=null,sig=null;
+    if(wantBar){lastBarAt=now;cb=document.createElement('canvas');const t=cropTo(src,R.bar,6,0);cb.width=t.width;cb.height=t.height;cb.getContext('2d').drawImage(t,0,0)}
+    if(wantMap){lastMapAt=now;sig=signature(src,R.map);cm=document.createElement('canvas');const t=cropTo(src,R.map,4,0);cm.width=t.width;cm.height=t.height;cm.getContext('2d').drawImage(t,0,0)}
+    if(src.close)src.close();
+    if(cb){await w.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});const {data}=await w.recognize(cb);onBarText(data.text)}
+    if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'-:. "});const {data}=await w.recognize(cm);if(!(await onMapTitle(data.text)))onMinimap(sig);else lastMini=sig}
+  }catch(e){console.warn(e)}finally{side2Busy=false}
 }
 function showCalib(c,text){
   if(!$('ocrView').closest('details').open)return;
@@ -559,7 +565,7 @@ let mapVotes=[];
 const curMap=()=>($('mapName').value.trim()||'Unknown map');
 const mapUrl=n=>n&&n!=='Unknown map'?`https://meowdb.com/msclassic/maps?view=list&q=${encodeURIComponent(n)}`:'https://meowdb.com/msclassic/maps';
 function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();showMapPic();loadAutoMobs()}
-function showMapPic(){const id=mapIds[curMap()];$('mapPic').innerHTML=id?`<img src="${MSIO}/map/${id}/minimap" alt="Minimap of ${esc(curMap())}" style="max-width:100%;border-radius:6px;border:1px solid var(--line)">`:''}
+function showMapPic(){const m=DB&&DB.maps[curMap()];$('mapPic').innerHTML=m&&m.mini?`<img src="${WIMG}${m.mini}" alt="Minimap of ${esc(curMap())}" style="max-width:100%;border-radius:6px;border:1px solid var(--line)">`:''}
 $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl(curMap());showMobs();renderKills()};
 /* The map name isn't always shown, so maps are recognised by their minimap picture instead.
    The first time you're on a map, type (or pick) its name; the minimap is remembered and the
@@ -570,16 +576,9 @@ $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl
 const lev=(a,b)=>{a=a.toLowerCase();b=b.toLowerCase();const d=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]};
 const nameCache=new Map();let titleVotes=[];
 async function canonMap(street,map){
-  const key=street+'|'+map;if(nameCache.has(key))return nameCache.get(key);
-  const words=map.split(' ').filter(w=>w.length>=4).sort((a,b)=>b.length-a.length);
-  let best=null,bs=1;
-  for(const q of [map,...words.slice(0,2)]){
-    try{const list=await (await fetch(MSIO+'/map?count=40&searchFor='+encodeURIComponent(q))).json();
-      for(const m of list){const n=m.name.trim();let sc=lev(n,map)/Math.max(n.length,map.length);if(street&&m.streetName)sc+=0.3*lev(m.streetName.trim(),street)/Math.max(m.streetName.length,street.length);
-        if(sc<bs){bs=sc;best={name:n,street:(m.streetName||'').trim(),id:m.id}}}}catch{return null}
-    if(bs<0.12)break;
-  }
-  const out=bs<0.4?best:null;nameCache.set(key,out);return out;
+  if(!DB)return null;const key=street+'|'+map;if(nameCache.has(key))return nameCache.get(key);
+  let best=null,bs=1;for(const n of Object.keys(DB.maps)){const sc=lev(n,map)/Math.max(n.length,map.length);if(sc<bs){bs=sc;best={name:n}}}
+  const out=bs<0.35?best:null;nameCache.set(key,out);return out;
 }
 async function onMapTitle(text){
   const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z' :\-.]/g,' ').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l));
@@ -590,7 +589,7 @@ async function onMapTitle(text){
   titleVotes.push(name);titleVotes=titleVotes.slice(-3);
   if(Date.now()-(manualAt||0)<60000)return true;
   if((titleVotes.filter(v=>v===name).length>=2||!$('mapName').value)&&name!==$('mapName').value){
-    if(hit)mapIds[name]=hit.id;setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
+    setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
   return true;
 }
 let manualAt=0;const mapIds=store.get('mapIds',{});
@@ -610,9 +609,7 @@ function learnMap(){
 }
 $('mapName').onchange=()=>{manualAt=Date.now();learnMap();loadAutoMobs()};
 // name suggestions (map names match the original game's, from maplestory.io)
-let sugT=0;$('mapName').addEventListener('input',()=>{clearTimeout(sugT);const q=$('mapName').value.trim();if(q.length<3)return;
-  sugT=setTimeout(async()=>{try{const r=await fetch('https://maplestory.io/api/GMS/83/map?count=12&searchFor='+encodeURIComponent(q));const j=await r.json();
-    $('mapList').innerHTML=[...new Set(j.map(m=>m.name.trim()))].map(n=>`<option value="${esc(n)}">`).join('')}catch{}},350)});
+$('mapName').addEventListener('focus',()=>{if(DB)$('mapList').innerHTML=Object.keys(DB.maps).sort().map(n=>`<option value="${esc(n)}">`).join('')});
 $('bMapSide').onclick=()=>{const w=Math.round(screen.availWidth*.33);window.open(mapUrl(curMap()),'meowdb',`popup,width=${w},height=${screen.availHeight},left=${screen.availWidth-w},top=0`)};
 
 /* ---------- pop-out overlay (always on top) ---------- */
@@ -661,9 +658,9 @@ function parseMobTable(text){
   while((m=re.exec(t))){const name=m[1].trim();if(/^(monster|lv|hp|exp|share)$/i.test(name))continue;out.push({name,lv:+m[2],hp:num(m[3]),exp:num(m[4])})}
   return out;
 }
-function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length)m=store.get('auto'+mobKey(map),[]);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length&&DB&&DB.maps[map])m=DB.maps[map].mobs.map(([n,c])=>{const x=DB.mobs[n]||{};return{name:n,lv:x.lv||0,hp:x.hp||0,exp:x.exp||0,spawns:c}}).filter(x=>x.exp>0);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
 $('mobPaste').oninput=()=>{const mobs=parseMobTable($('mobPaste').value);store.set(mobKey(curMap()),mobs);showMobs();renderKills()};
-function showMobs(){const mobs=mobsFor(curMap());const auto=!store.get(mobKey(curMap()),[]).length&&mobs.length;$('mobSrc').textContent=auto?'Monster list from the original game\'s data; paste meowdb\'s table below if it differs.':mobs.length?'Monster list from your meowdb paste.':'';$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
+function showMobs(){const mobs=mobsFor(curMap());const auto=!store.get(mobKey(curMap()),[]).length&&mobs.length;$('mobSrc').textContent=auto?'Monsters and spawns from the Classic database.':mobs.length?'Monster list from your paste.':'';$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
 $('solo').checked=store.get('solo',true);$('solo').onchange=()=>{store.set('solo',$('solo').checked);if(S)S.solo=$('solo').checked;renderKills()};
 const BONUS=[];for(let E=1;E<=6;E++)for(let H=1;H<=E;H++)BONUS.push({E,H,b:Math.min(.3,.1*(E-1))+.05*(H-1)});
 function analyze(ev,mobs,solo){
@@ -685,8 +682,9 @@ function analyze(ev,mobs,solo){
   const list=[...rows.values()];if(unknown.n)list.push(unknown);
   const totExp=list.reduce((a,b)=>a+b.exp,0)||1,totMeso=totals(ev).meso;
   // mesos can't be tied to a monster from the pickup text; split them by kills x level (meso drops grow with level)
-  const w=list.reduce((a,b)=>a+b.n*(b.lv||1),0)||1;
-  for(const x of list){x.expPct=x.exp/totExp;x.meso=totMeso*(x.n*(x.lv||1))/w}
+  const mw=x=>expMeso(x.name)??(x.lv||1); // expected mesos per kill from the database's drop data
+  const w=list.reduce((a,b)=>a+b.n*mw(b),0)||1;
+  for(const x of list){x.expPct=x.exp/totExp;x.meso=totMeso*(x.n*mw(x))/w}
   list.sort((a,b)=>b.exp-a.exp);
   // party size estimates
   const bon=exps.filter(e=>e.bonus>0).map(e=>e.bonus/base(e));
@@ -701,37 +699,47 @@ function analyze(ev,mobs,solo){
   return{list,party};
 }
 
-/* monster pictures and automatic monster list (public maplestory.io API) */
-const MSIO='https://maplestory.io/api/GMS/83';
-const imgIds=store.get('mobImgIds',{});
-async function mobId(name){
-  if(name in imgIds)return imgIds[name];
-  imgIds[name]=null;
-  try{const j=await (await fetch(MSIO+'/mob?count=20&searchFor='+encodeURIComponent(name))).json();
-    const m=j.find(x=>x.name.trim().toLowerCase()===name.toLowerCase())||null;imgIds[name]=m?m.id:null;store.set('mobImgIds',imgIds);if(m)renderKills()}catch{delete imgIds[name]}
-  return imgIds[name];
+/* ---------- Classic database (from the MapleClassic Wiki, CC BY-NC-SA 4.0) ----------
+   On first use the overlay downloads every Classic map (with its monster spawns) and every
+   monster (level, HP, EXP, mesos, drops with rates, picture) from mapleclassic.wiki's public API,
+   about 15 requests, and keeps it in this browser as its own database. After that nothing is
+   fetched live; "Update database" refreshes it. */
+const WIKI='https://mapleclassic.wiki',WIMG=WIKI+'/images/';
+let DB=null;try{DB=JSON.parse(localStorage.getItem('mgm.db')||'null')}catch{}
+const field=(w,k)=>{const m=new RegExp('\\|\\s*'+k+'\\s*=\\s*([^\\n|]*)').exec(w);return m?m[1].trim():''};
+const tpl=(w,name)=>[...w.matchAll(new RegExp('\\{\\{'+name+'\\|([^}]*)\\}\\}','g'))].map(m=>Object.fromEntries(m[1].split('|').map(x=>{const i=x.indexOf('=');return [x.slice(0,i).trim(),x.slice(i+1).trim()]})));
+const wapi=async q=>(await fetch(WIKI+'/api.php?format=json&origin=*&'+q)).json();
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function buildDB(){
+  $('dbInfo').textContent='Downloading the Classic database…';
+  const members=async cat=>{let out=[],c='';do{const j=await wapi(`action=query&list=categorymembers&cmtitle=Category:${encodeURIComponent(cat)}&cmlimit=500&cmnamespace=0${c?'&cmcontinue='+encodeURIComponent(c):''}`);out.push(...j.query.categorymembers.map(m=>m.title));c=j.continue&&j.continue.cmcontinue}while(c);return out};
+  const contents=async titles=>{const out={};for(let i=0;i<titles.length;i+=50){const j=await wapi('action=query&prop=revisions&rvprop=content&rvslots=main&redirects=1&titles='+encodeURIComponent(titles.slice(i,i+50).join('|')));for(const p of Object.values(j.query.pages))if(p.revisions)out[p.title]=p.revisions[0].slots.main['*'];await wait(400)}return out};
+  const urls=async files=>{const out={};for(let i=0;i<files.length;i+=50){const b=files.slice(i,i+50);const j=await wapi('action=query&prop=imageinfo&iiprop=url&titles='+encodeURIComponent(b.map(f=>'File:'+f).join('|')));const norm={};for(const n of (j.query.normalized||[]))norm[n.to]=n.from;for(const p of Object.values(j.query.pages))if(p.imageinfo)out[(norm[p.title]||p.title).replace(/^File:/,'')]=p.imageinfo[0].url.replace(WIMG,'');await wait(300)}return out};
+  const mw=await contents(await members('Monsters')),pw=await contents(await members('Maps'));
+  const mobs={};for(const [t,w] of Object.entries(mw)){if(!/Infobox monster/.test(w))continue;const n=field(w,'name_en')||t;const drops=tpl(w,'Drop').filter(d=>d.category!=='nothing');const meso=drops.find(d=>d.category==='meso');
+    mobs[n]={lv:+field(w,'level')||0,hp:num(field(w,'hp')),exp:num(field(w,'exp')),boss:field(w,'boss')==='yes',meso:meso?[+meso.min_quantity||0,+meso.max_quantity||0,+meso.drop_rate||0]:null,
+      drops:drops.filter(d=>d.category!=='meso'&&d.item_id).map(d=>[d.item_id,d.category,d.drop_rate?+(+d.drop_rate).toFixed(3):null])}}
+  const maps={};for(const [t,w] of Object.entries(pw)){const n=field(w,'name_en')||t;const sp={};for(const x of tpl(w,'Map spawn'))if(x.monster_id)sp[x.monster_id]=(sp[x.monster_id]||0)+(+x.spawn_count||0);maps[n]={region:field(w,'region'),town:field(w,'nearest_town'),mobs:Object.entries(sp)}}
+  $('dbInfo').textContent='Downloading pictures…';
+  const mu=await urls(Object.keys(mobs).flatMap(n=>['webp','png','gif'].map(e=>n+'.'+e)));for(const n in mobs)mobs[n].img=mu[n+'.webp']||mu[n+'.png']||mu[n+'.gif']||'';
+  const pu=await urls(Object.keys(maps).map(n=>n+'-minimap.png'));for(const n in maps)maps[n].mini=pu[n+'-minimap.png']||'';
+  DB={at:Date.now(),mobs,maps};try{localStorage.setItem('mgm.db',JSON.stringify(DB))}catch{}
+  showDB();showMobs();renderKills();showMapPic();
 }
-const mobImg=name=>{const id=imgIds[name];if(id===undefined){mobId(name);return ''}return id?`<img class="mobimg" loading="lazy" src="${MSIO}/mob/${id}/render/stand" alt="">`:''};
-async function loadAutoMobs(){
-  const map=curMap();if(map==='Unknown map')return;
-  if(!mapIds[map]){try{const l=await (await fetch(MSIO+'/map?count=20&searchFor='+encodeURIComponent(map))).json();const h=l.find(m=>m.name.trim().toLowerCase()===map.toLowerCase());if(h){mapIds[map]=h.id;store.set('mapIds',mapIds);showMapPic()}}catch{}}
-  if(store.get(mobKey(map),[]).length||store.get('auto'+mobKey(map),null))return;
-  try{
-    const list=await (await fetch(MSIO+'/map?count=20&searchFor='+encodeURIComponent(map))).json();
-    const hit=list.find(m=>m.name.trim().toLowerCase()===map.toLowerCase());if(!hit){store.set('auto'+mobKey(map),[]);return}
-    mapIds[map]=hit.id;store.set('mapIds',mapIds);showMapPic();
-    const md=await (await fetch(MSIO+'/map/'+hit.id)).json();
-    const ids=[...new Set((md.mobs||[]).map(m=>m.id))].slice(0,12);
-    const mobs=[];for(const id of ids){const m=await (await fetch(MSIO+'/mob/'+id)).json();mobs.push({name:m.name,lv:m.meta.level,hp:m.meta.maxHP,exp:m.meta.exp});imgIds[m.name]=id}
-    store.set('mobImgIds',imgIds);store.set('auto'+mobKey(map),mobs);showMobs();renderKills();
-  }catch(e){}
-}
+function showDB(){$('dbInfo').textContent=DB?`Classic database: ${Object.keys(DB.maps).length} maps, ${Object.keys(DB.mobs).length} monsters, saved ${new Date(DB.at).toLocaleDateString()}. Source: MapleClassic Wiki.`:'Classic database not downloaded yet.'}
+async function ensureDB(){if(!DB||Date.now()-DB.at>7*864e5){try{await buildDB()}catch(e){$('dbInfo').textContent='Could not download the Classic database ('+e.message+'). It will try again next time.'}}else showDB()}
+const mobImg=name=>{const m=DB&&DB.mobs[name];return m&&m.img?`<img class="mobimg" loading="lazy" src="${WIMG}${m.img}" alt="">`:''};
+function bestDrops(name){const m=DB&&DB.mobs[name];if(!m)return [];
+  const score=d=>(d[1]==='equip'?3:/scroll/i.test(d[0])?3:d[1]==='use'&&!/potion|arrow/i.test(d[0])?1:0)+(d[2]!=null&&d[2]<1?2:0);
+  return [...m.drops].filter(d=>d[1]!=='quest').sort((a,b)=>score(b)-score(a)||(a[2]??99)-(b[2]??99)).slice(0,3)}
+const expMeso=name=>{const m=DB&&DB.mobs[name];return m&&m.meso?(m.meso[0]+m.meso[1])/2*m.meso[2]/100:null};
+function loadAutoMobs(){showMapPic();showMobs();renderKills()}
 function renderKills(){
   const s=S;const ev=s?s.events:[];const solo=$('solo').checked;
   const {list,party}=analyze(ev,mobsFor(curMap()),solo);
   const t=elapsed(),hr=t/3600000;
   for(const m of mobsFor(curMap()))if(!list.some(x=>x.name===m.name))list.push({name:m.name,lv:m.lv,each:m.exp,n:0,exp:0,expPct:0,meso:0});
-  $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">Kills/hr</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}${x.lv?` <small>Lv ${x.lv} · ${fmt(x.each)} EXP</small>`:''}</td><td class="n kc">${fmt(x.n)}</td><td class="n">${hr>.003?fmt(x.n/hr):'–'}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Set the map and its monsters appear here with a kill counter.</small></td></tr>';
+  $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">Kills/hr</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}${x.lv?` <small>Lv ${x.lv} · ${fmt(x.each)} EXP</small>`:''}${(()=>{const d=bestDrops(x.name);return d.length?`<br><small class="itm">Best drops: ${d.map(z=>esc(z[0])+(z[2]!=null?` (${z[2]<1?z[2].toFixed(2):z[2].toFixed(1)}%)`:'')).join(', ')}</small>`:''})()}</td><td class="n kc">${fmt(x.n)}</td><td class="n">${hr>.003?fmt(x.n/hr):'–'}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Set the map and its monsters appear here with a kill counter.</small></td></tr>';
   const ic=S?itemCounts(S):[];
   $('itemsT').innerHTML=ic.length?'<tr><th>Item</th><th class="n">Count</th><th class="n">Per hour</th></tr>'+ic.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n kc itm">${fmt(c)}</td><td class="n">${hr>.003?fmt(c/hr):'–'}</td></tr>`).join(''):'<tr><td><small>Items you loot are listed here with a count.</small></td></tr>';
   $('party').innerHTML=party?[
@@ -763,17 +771,21 @@ function parseBar(text){
 }
 function onBarText(text){MGM.lastBar=text;
   if(!S||state!=='run')return;
-  const r=parseBar(text);if(!r){return}
-  const needEst=r.need||(S.bar&&S.bar.need)||null;
-  const selfCheck=needEst&&r.pct!=null&&Math.abs(r.cur/needEst*100-r.pct)<0.06; // "cur [pct%]" agrees with the level's EXP total
-  if(!selfCheck){if(!barPend||barPend.cur!==r.cur){barPend=r;return}} // otherwise need two identical reads in a row
-  const b=S.bar||(S.bar={gained:0,msg:0,last:null,need:null,levels:0});
-  if(b.last==null){b.last=r.cur;b.need=r.need||(r.pct>1?Math.round(r.cur*100/r.pct):null);renderBar();return}
-  if(r.cur>b.last){const d=r.cur-b.last;if(!b.need||d<b.need)b.gained+=d;b.last=r.cur}
-  else if(r.cur<b.last){ // level up (or a death); count it as a level-up only if the % also wrapped
-    if(b.need&&(r.pct==null||r.pct<30)){b.gained+=(b.need-b.last)+r.cur;b.levels++}
-    b.last=r.cur}
-  if(r.need)b.need=r.need;else if(!b.need&&r.pct>1)b.need=Math.round(r.cur*100/r.pct);
+  const r=parseBar(text);if(!r||r.pct==null)return;
+  const b=S.bar||(S.bar={gained:0,msg:0,last:null,lastPct:null,need:null,levels:0});
+  const confirmed=barPend&&barPend.cur===r.cur;barPend=r;   // the same value read twice in a row
+  const need=r.need||b.need;
+  const agrees=need&&Math.abs(r.cur/need*100-r.pct)<0.08;    // "88,666 [4.78%]" fits this level's EXP total
+  const set=()=>{b.last=r.cur;b.lastPct=r.pct;if(r.need)b.need=r.need;else if(!b.need&&r.pct>=1)b.need=Math.round(r.cur*100/r.pct)};
+  if(b.last==null){if(confirmed)set();renderBar();return}
+  if(r.cur>b.last&&r.pct>=b.lastPct){
+    const d=r.cur-b.last,cap=need?need*0.05:Infinity;      // more than 5% of a level in 3 seconds is a misread
+    if((agrees||confirmed)&&(d<=cap||(confirmed&&d<=cap*4))){b.gained+=d;set()}
+  }else if(r.cur<b.last){
+    if(b.lastPct>=80&&r.pct<=20&&confirmed&&b.need){        // level-up: the bar wrapped round
+      b.gained+=(b.need-b.last)+r.cur;b.levels++;b.need=r.pct>=1?Math.round(r.cur*100/r.pct):null;b.last=r.cur;b.lastPct=r.pct}
+    else if(confirmed&&agrees&&b.lastPct-r.pct<15){b.last=r.cur;b.lastPct=r.pct} // EXP lost on death: not a gain
+  }
   renderBar();
 }
 function renderBar(){
@@ -800,6 +812,7 @@ showSaved();
 /* ---------- restore an interrupted session ---------- */
 const live=store.get('live',null);
 if(live&&live.S){S=live.S;state='paused';setStatus('Restored paused session · share screen to resume');setButtons();onTick()}
+$('bDB').onclick=()=>buildDB().catch(e=>$('dbInfo').textContent='Update failed: '+e.message);ensureDB();
 showMobs();renderKills();renderHist();setButtons();
 window.MGM={parseLine,analyze,parseMobTable,ingest,get S(){return S},get state(){return state},record,endSession,summaryText:()=>summaryText(S)};
 }
