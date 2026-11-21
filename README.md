@@ -17,7 +17,9 @@ A browser overlay for MapleStory Classic that measures EXP and mesos per hour wh
 
 ## Tips
 - Open **Calibration** to see what the reader sees. Raise or lower *Text brightness cut* until the messages read cleanly.
+- The map is recognised from the minimap: type a new map's name once and it is remembered. Monsters appear with pictures and a kill counter.
+- Drag the middle of a box to move it, any corner or edge to resize. Press **Save settings for this PC** to keep your layout on that PC; **Copy settings code** moves it to another PC.
 - Paste a map's monster table (Monster · Lv · HP · EXP) from its NiaMeowDB page once to get kills per monster by name.
 
 ## Credits
-Map, monster and price data: [NiaMeowDB](https://meowdb.com/msclassic). Party EXP formula as published on NiaMeowDB (credit ohmi + azzybish). OCR: [Tesseract.js](https://github.com/naptha/tesseract.js).
+Monster pictures and fallback monster lists: [maplestory.io](https://maplestory.io). Map, monster and price data: [NiaMeowDB](https://meowdb.com/msclassic). Party EXP formula as published on NiaMeowDB (credit ohmi + azzybish). OCR: [Tesseract.js](https://github.com/naptha/tesseract.js).

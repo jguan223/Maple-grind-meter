@@ -25,13 +25,22 @@ main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;
 .stat .s{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
 .exp{color:var(--exp)}.meso{color:var(--meso)}.itm{color:var(--item)}
 #clock{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
-#stage{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9}
+#stage{position:relative;background:#000;border-radius:8px;overflow:visible;aspect-ratio:16/9;margin-top:20px}
 #stage video{width:100%;height:100%;object-fit:contain;display:block}
 [hidden]{display:none!important}
 #stage .hint{position:absolute;inset:0;display:grid;place-items:center;color:var(--mute);text-align:center;padding:20px}
 .region{position:absolute;border:2px dashed;cursor:move}
 .region span{position:absolute;top:-20px;left:0;font-size:12px;padding:1px 5px;border-radius:4px;color:#000;white-space:nowrap}
-.region i{position:absolute;right:-6px;bottom:-6px;width:12px;height:12px;cursor:nwse-resize;border-radius:2px}
+.region i{position:absolute;width:14px;height:14px;border-radius:3px;border:1px solid #000}
+.region i[data-h=nw]{left:-7px;top:-7px;cursor:nwse-resize}.region i[data-h=ne]{right:-7px;top:-7px;cursor:nesw-resize}
+.region i[data-h=sw]{left:-7px;bottom:-7px;cursor:nesw-resize}.region i[data-h=se]{right:-7px;bottom:-7px;cursor:nwse-resize}
+.region i[data-h=n]{left:calc(50% - 7px);top:-7px;cursor:ns-resize}.region i[data-h=s]{left:calc(50% - 7px);bottom:-7px;cursor:ns-resize}
+.region i[data-h=w]{top:calc(50% - 7px);left:-7px;cursor:ew-resize}.region i[data-h=e]{top:calc(50% - 7px);right:-7px;cursor:ew-resize}
+.region:hover{background:#ffffff14}
+.region.small i{width:10px;height:10px}.region.small i[data-h=n],.region.small i[data-h=s],.region.small i[data-h=e],.region.small i[data-h=w]{display:none}
+.region.small i[data-h=nw]{left:-11px;top:-11px}.region.small i[data-h=ne]{right:-11px;top:-11px}.region.small i[data-h=sw]{left:-11px;bottom:-11px}.region.small i[data-h=se]{right:-11px;bottom:-11px}
+.mobimg{width:44px;height:36px;object-fit:contain;vertical-align:middle;margin-right:6px;image-rendering:auto}
+.kc{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 #rGain{border-color:var(--exp)}#rGain span,#rGain i{background:var(--exp)}
 #rMap{border-color:var(--item)}#rMap span,#rMap i{background:var(--item)}
 #rBar{border-color:#e9a3ff}#rBar span,#rBar i{background:#e9a3ff}
@@ -72,10 +81,10 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
     <div class="card">
       <div id="stage">
         <video id="vid" muted playsinline></video>
-        <div class="hint" id="hint">Click <b>Share game screen</b> and pick the MapleStory window (works windowed or fullscreen; in fullscreen pick the whole screen).<br>Then drag the green box over the EXP / meso pickup messages (bottom right)<br>the blue box over the map name (top left, by the minimap)<br>and the pink box over the numbers on the EXP bar.</div>
-        <div class="region" id="rGain" hidden><span>EXP / meso / item messages</span><i></i></div>
-        <div class="region" id="rMap" hidden><span>Map name</span><i></i></div>
-        <div class="region" id="rBar" hidden><span>EXP bar numbers</span><i></i></div>
+        <div class="hint" id="hint">Click <b>Share game screen</b> and pick the MapleStory window (works windowed or fullscreen; in fullscreen pick the whole screen).<br>Then drag the boxes into place (drag the middle to move, any corner or edge to resize): the green box over the EXP / meso pickup messages (bottom right)<br>the blue box over the minimap (top left)<br>and the pink box over the numbers on the EXP bar.</div>
+        <div class="region" id="rGain" hidden><span>EXP / meso / item messages</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
+        <div class="region" id="rMap" hidden><span>Minimap (recognises the map)</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
+        <div class="region" id="rBar" hidden><span>EXP bar numbers</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
       </div>
       <div class="row" style="margin-top:8px">
         <label>Scan speed
@@ -84,6 +93,12 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
         <label>Text brightness cut <input id="thr" type="number" min="60" max="250" value="140" style="width:70px"></label>
         <button id="bReset">Reset boxes</button>
         <label><input type="checkbox" id="newestTop"> Newest message is on top</label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="bSavePC" class="go">Save settings for this PC</button>
+        <button id="bExport">Copy settings code</button>
+        <button id="bImport">Paste settings code</button>
+        <small id="savedInfo"></small>
         <small>Only the boxed areas are read, and only when they change, to keep CPU low.</small>
       </div>
     </div>
@@ -91,11 +106,11 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
     <div class="card" style="margin-top:14px">
       <h2>Current map</h2>
       <div class="row">
-        <input id="mapName" placeholder="Read from screen, or type it" style="flex:1 1 220px">
+        <input id="mapName" list="mapList" placeholder="Recognised from the minimap, or type it" style="flex:1 1 220px"><datalist id="mapList"></datalist>
         <a id="mapLink" href="https://meowdb.com/msclassic/maps" target="_blank" rel="noopener">Mobs, drops and prices on meowdb ↗</a>
         <button id="bMapSide">Open meowdb beside the game</button>
       </div>
-      <small>Map name is read every 8 seconds. The meowdb link opens that map's search, where each mob's drops and their Free Market prices are listed.</small>
+      <small id="mapLearn">The blue minimap box is checked every 4 seconds. On a new map, type its name once and it is remembered from then on.</small>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -126,19 +141,23 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
       </div>
     </div>
     <div class="card" style="margin-top:14px">
-      <h2>Live pickups</h2>
-      <div class="feed" id="feed"><small>Nothing yet.</small></div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Kills by monster</h2>
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Monsters on this map · kill counter</h2>
         <label style="font-size:14px;color:var(--ink)"><input type="checkbox" id="solo" checked> Not in a party (solo)</label></div>
-      <div id="party" class="row" style="margin:6px 0"></div>
+      <div id="party" class="row" style="margin:6px 0"></div><small id="mobSrc"></small>
       <div class="scroll"><table id="kills"></table></div>
-      <details style="margin-top:8px"><summary>Monsters on this map (paste from meowdb)</summary>
-        <small>On the map's meowdb page, select the <b>Monster · Lv · HP · EXP</b> table, copy it and paste it here. It is saved for this map. Without it, kills are grouped by EXP amount.</small>
+      <details style="margin-top:8px"><summary>Fix the monster list (paste from meowdb)</summary>
+        <small>On the map's meowdb page, select the <b>Monster · Lv · HP · EXP</b> table, copy it and paste it here. It is saved for this map and replaces the automatic list, which comes from the original game's data and can differ from Classic. Without either, kills are grouped by EXP amount.</small>
         <textarea id="mobPaste" rows="5" style="width:100%;margin-top:6px;font:13px monospace;background:#120f0b;color:var(--ink);border:1px solid var(--line);border-radius:6px" placeholder="Cold Eye	40	1,894	85	39%&#10;Drake	50	2,950	133	41%"></textarea>
         <div id="mobParsed"><small></small></div>
       </details>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Items picked up</h2>
+      <div class="scroll"><table id="itemsT"></table></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Live pickups</h2>
+      <div class="feed" id="feed"><small>Nothing yet.</small></div>
     </div>
     <div class="card" style="margin-top:14px">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Best maps from your sessions</h2>
@@ -163,6 +182,7 @@ const $=id=>document.getElementById(id);
 const fmt=n=>Math.round(n).toLocaleString();
 const hms=ms=>{const s=Math.floor(ms/1000);return [s/3600|0,(s%3600)/60|0,s%60].map(x=>String(x).padStart(2,'0')).join(':')};
 const store={get(k,d){try{const v=localStorage.getItem('mgm.'+k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem('mgm.'+k,JSON.stringify(v))}catch{}}};
+{const sv=store.get('pcSaved',null);if(sv&&!sessionStorage.getItem('mgm.applied')){for(const [k,v] of Object.entries(sv.s))store.set(k,v);try{sessionStorage.setItem('mgm.applied','1')}catch{}}}
 
 /* ---------- reading the pickup lines ----------
    OCR on small game text is noisy ("experience" -> "expenence", "+" -> "4", "$", "[").
@@ -205,9 +225,15 @@ function parseLine(raw){
       return{type:'exp',value:v+bonus,base:v,bonus,key:'e'+v+'_'+bonus};
     }
     if(new RegExp(pat.item,'i').test(line)||/gained|obtained|acquired/i.test(line)){
-      const m=/[(\[{]\s*([A-Za-z'][^)\]}]{1,40}?)\s*[)\]}]?\s*(?:x\s?\d+)?$/.exec(line);if(!m)return null;
-      const name=m[1].replace(/[^\w' :-]/g,'').trim();if(name.length<3)return null;
-      return{type:'item',value:1,name,key:'i'+name.toLowerCase()};
+      // name in brackets "(Drake Skull)", or the words around gained/obtained: "Drake Skull has been obtained", "Gained Drake Skull x2"
+      let q=1;const qm=/(?:\bx\s?|\u00d7\s?)(\d{1,4})\b|\((\d{1,4})\)\s*$/i.exec(line);if(qm)q=+(qm[1]||qm[2]);
+      let name=null,m=/[(\[{]\s*([A-Za-z'][^)\]}]{1,40}?)\s*[)\]}]?\s*(?:x\s?\d+)?$/.exec(line);
+      if(m)name=m[1];
+      else if((m=/^(.{3,40}?)\s+(?:has been |have been |was )?(?:obtained|acquired|gained)/i.exec(line)))name=m[1];
+      else if((m=/(?:gained|obtained|acquired|picked up)\s+(?:an?\s+)?(?:item\s*[:\-]?\s*)?(.{3,40})$/i.exec(line)))name=m[1];
+      name=(name||'').replace(/^(you\s+have|you)\s+/i,'').replace(/\b(x\s?\d+|item\.?|an item\.?)\s*$/i,'').replace(/[^\w' :-]/g,'').trim();
+      if(name.length<3||/^(an?|item|items)$/i.test(name))name='Unnamed item';
+      return{type:'item',value:1,qty:q,name,key:'i'+name.toLowerCase()+q};
     }
   }catch(e){}
   return null;
@@ -215,13 +241,13 @@ function parseLine(raw){
 
 
 /* ---------- regions ---------- */
-const DEFR={gain:{x:.6,y:.55,w:.39,h:.35},map:{x:.0,y:.0,w:.28,h:.09},bar:{x:.3,y:.94,w:.4,h:.05}};
-let R=store.get('regions',structuredClone(DEFR));if(!R.bar)R.bar=structuredClone(DEFR.bar);
+const DEFR={gain:{x:.79,y:.64,w:.21,h:.30},map:{x:0,y:0,w:.145,h:.17},bar:{x:.525,y:.952,w:.115,h:.042}};
+let R=store.get('regions2',structuredClone(DEFR));if(!R.bar)R.bar=structuredClone(DEFR.bar);
 /* Fullscreen vs windowed: boxes are remembered per capture size. When the size changes to one we
    have not seen, the message box stays pinned to the bottom-right corner and the map box to the
    top-left, keeping their size relative to the game's height (the UI scales with height). */
-let capSize=null;const profiles=store.get('profiles',{});
-function saveRegions(){store.set('regions',R);if(capSize){profiles[capSize.k]=structuredClone(R);store.set('profiles',profiles)}}
+let capSize=null;const profiles=store.get('profiles2',{});
+function saveRegions(){store.set('regions2',R);if(capSize){profiles[capSize.k]=structuredClone(R);store.set('profiles2',profiles)}}
 function adaptTo(W,H){
   const k=W+'x'+H;if(capSize&&capSize.k===k)return;
   if(profiles[k])R=structuredClone(profiles[k]);
@@ -239,15 +265,19 @@ function placeBoxes(){
   const dw=va>sa?sw:sh*va,dh=va>sa?sw/va:sh,ox=(sw-dw)/2,oy=(sh-dh)/2;
   stage._d={dw,dh,ox,oy};
   for(const [k,id] of [['gain','rGain'],['map','rMap'],['bar','rBar']]){const el=$(id),r=R[k];el.hidden=false;
-    Object.assign(el.style,{left:ox+r.x*dw+'px',top:oy+r.y*dh+'px',width:r.w*dw+'px',height:r.h*dh+'px'})}
+    Object.assign(el.style,{left:ox+r.x*dw+'px',top:oy+r.y*dh+'px',width:r.w*dw+'px',height:r.h*dh+'px'});el.classList.toggle('small',r.h*dh<40||r.w*dw<60)}
 }
 function dragify(id,k){
   const el=$(id);
-  el.onpointerdown=e=>{e.preventDefault();const d=stage._d;if(!d)return;const resize=e.target.tagName==='I';const sx=e.clientX,sy=e.clientY,o={...R[k]};
+  el.onpointerdown=e=>{e.preventDefault();const d=stage._d;if(!d)return;const h=e.target.dataset&&e.target.dataset.h||'';const sx=e.clientX,sy=e.clientY,o={...R[k]};
     el.setPointerCapture(e.pointerId);
-    el.onpointermove=ev=>{const dx=(ev.clientX-sx)/d.dw,dy=(ev.clientY-sy)/d.dh;const r=R[k];
-      if(resize){r.w=Math.min(1-r.x,Math.max(.03,o.w+dx));r.h=Math.min(1-r.y,Math.max(.02,o.h+dy))}
-      else{r.x=Math.min(1-r.w,Math.max(0,o.x+dx));r.y=Math.min(1-r.h,Math.max(0,o.y+dy))}placeBoxes()};
+    el.onpointermove=ev=>{const dx=(ev.clientX-sx)/d.dw,dy=(ev.clientY-sy)/d.dh;const r=R[k],MW=.02,MH=.015;
+      if(!h){r.x=Math.min(1-r.w,Math.max(0,o.x+dx));r.y=Math.min(1-r.h,Math.max(0,o.y+dy))}
+      else{let x1=o.x,y1=o.y,x2=o.x+o.w,y2=o.y+o.h;
+        if(h.includes('w'))x1=Math.min(x2-MW,Math.max(0,o.x+dx));if(h.includes('e'))x2=Math.max(x1+MW,Math.min(1,o.x+o.w+dx));
+        if(h.includes('n'))y1=Math.min(y2-MH,Math.max(0,o.y+dy));if(h.includes('s'))y2=Math.max(y1+MH,Math.min(1,o.y+o.h+dy));
+        Object.assign(r,{x:x1,y:y1,w:x2-x1,h:y2-y1})}
+      placeBoxes()};
     el.onpointerup=()=>{el.onpointermove=null;saveRegions();lastSig=null}};
 }
 dragify('rGain','gain');dragify('rMap','map');dragify('rBar','bar');
@@ -263,7 +293,7 @@ $('bShare').onclick=async()=>{
   track=stream.getVideoTracks()[0];
   const v=$('vid');v.srcObject=stream;await v.play().catch(()=>{});
   grabber=('ImageCapture' in window)?new ImageCapture(track):null;
-  v.onloadedmetadata=placeBoxes;v.onresize=placeBoxes;setTimeout(placeBoxes,300);
+  const fit=()=>{if(v.videoWidth){stage.style.aspectRatio=v.videoWidth+'/'+v.videoHeight}placeBoxes()};v.onloadedmetadata=fit;v.onresize=fit;setTimeout(placeBoxes,300);
   $('hint').hidden=true;$('bStart').disabled=false;
   track.onended=()=>{setStatus('Screen share stopped');if(state==='run')pause()};
   setStatus('Sharing · loading text reader…');
@@ -312,7 +342,7 @@ tickW.onmessage=()=>{onTick();scan()};
 async function scan(){
   if(ocrBusy||!ocr||!stream)return;
   const scanning=state==='run'; const now=performance.now();
-  const wantMap=now-lastMapAt>8000;
+  const wantMap=now-lastMapAt>4000;
   if(!scanning&&!wantMap)return;
   ocrBusy=true;
   try{
@@ -334,12 +364,7 @@ async function scan(){
       const {data}=await ocr.recognize(c);
       onBarText(data.text);
     }
-    if(wantMap){
-      lastMapAt=performance.now();
-      const c=cropTo(src,R.map,2.5,+$('thr').value);
-      const {data}=await ocr.recognize(c);
-      onMapText(data.text);
-    }
+    if(wantMap){lastMapAt=performance.now();onMinimap(signature(src,R.map),src)}
     if(src.close)src.close();
   }catch(e){console.warn(e)}finally{ocrBusy=false}
 }
@@ -384,11 +409,11 @@ function isOutlier(p){ // a misread like "+231" -> "5842" shows up as one wildly
 }
 function record(p){
   if(state!=='run'||isOutlier(p))return;
-  const e={t:elapsed(),type:p.type,value:p.value};if(p.name)e.name=p.name;if(p.bonus){e.base=p.base;e.bonus=p.bonus}S.events.push(e);
+  const e={t:elapsed(),type:p.type,value:p.value};if(p.type==='item')e.raw=(p.raw||'').slice(0,80);if(p.name)e.name=p.name;if(p.bonus){e.base=p.base;e.bonus=p.bonus}if(p.qty>1)e.qty=p.qty;S.events.push(e);
   if(p.type==='exp'&&S.bar&&S.bar.last!=null)S.bar.msg=(S.bar.msg||0)+p.value;
   const f=$('feed');if(f.firstChild&&f.firstChild.tagName==='SMALL')f.innerHTML='';
   const d=document.createElement('div');d.className=p.type==='exp'?'exp':p.type==='meso'?'meso':'itm';
-  d.textContent=`${hms(e.t)}  ${p.type==='item'?'Item: '+p.name:'+'+fmt(p.value)+(p.type==='exp'?' EXP':' mesos')}`;
+  d.textContent=`${hms(e.t)}  ${p.type==='item'?'Item: '+p.name+(p.qty>1?' ×'+p.qty:''):'+'+fmt(p.value)+(p.type==='exp'?' EXP':' mesos')}`;
   f.prepend(d);while(f.childElementCount>80)f.lastChild.remove();
   persistLive();
 }
@@ -429,7 +454,7 @@ function onTick(){
   if(!onTick.k||Date.now()-onTick.k>2000){onTick.k=Date.now();renderKills();renderBar()}
   renderPip();
 }
-function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items++}return{exp,meso,items}}
+function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items+=e.qty||1}return{exp,meso,items}}
 
 /* ---------- alarm ---------- */
 function unlockAudio(){try{alarmCtx=alarmCtx||new AudioContext();alarmCtx.resume()}catch{}}
@@ -454,7 +479,7 @@ function mainMap(s){let best='Unknown map',v=-1;for(const [m,ms] of Object.entri
 function compact(s){const t=totals(s.events);return{id:s.id,started:s.started,ms:s.elapsed,map:mainMap(s),exp:t.exp,meso:t.meso,items:t.items}}
 function buckets(s,size){const out=[];const n=Math.max(1,Math.ceil(s.elapsed/size));for(let i=0;i<n;i++)out.push({exp:0,meso:0,items:0,from:i*size,to:Math.min(s.elapsed,(i+1)*size)});
   for(const e of s.events){const b=out[Math.min(n-1,Math.floor(e.t/size))];if(e.type==='item')b.items++;else b[e.type]+=e.value}return out}
-function itemCounts(s){const m=new Map();for(const e of s.events)if(e.type==='item')m.set(e.name,(m.get(e.name)||0)+1);return [...m].sort((a,b)=>b[1]-a[1])}
+function itemCounts(s){const m=new Map();for(const e of s.events)if(e.type==='item')m.set(e.name,(m.get(e.name)||0)+(e.qty||1));return [...m].sort((a,b)=>b[1]-a[1])}
 function summaryData(s){const t=totals(s.events),hr=s.elapsed/3600000||1e-9;return{t,hr,perHr:{exp:t.exp/hr,meso:t.meso/hr},per30:{exp:t.exp/hr/2,meso:t.meso/hr/2},b30:buckets(s,1800000),items:itemCounts(s),map:mainMap(s)}}
 function showSummary(s){
   const d=summaryData(s);
@@ -518,18 +543,30 @@ $('bHistCopy').onclick=()=>copy(mapStats().map((r,i)=>`${i+1}. ${r.map} — ${fm
 let mapVotes=[];
 const curMap=()=>($('mapName').value.trim()||'Unknown map');
 const mapUrl=n=>n&&n!=='Unknown map'?`https://meowdb.com/msclassic/maps?view=list&q=${encodeURIComponent(n)}`:'https://meowdb.com/msclassic/maps';
-function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip()}
+function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();loadAutoMobs()}
 $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl(curMap());showMobs();renderKills()};
-function onMapText(text){
-  if($('mapName').dataset.manual)return;
-  // keep the longest readable line; the street name usually sits above the map name
-  const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z0-9' :\-.]/g,'').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l)&&l.length>=4);
-  if(!lines.length)return;
-  const cand=lines.sort((a,b)=>b.length-a.length)[0];
-  mapVotes.push(cand);mapVotes=mapVotes.slice(-3);
-  if(mapVotes.filter(v=>v===cand).length>=2&&cand!==$('mapName').value)setMap(cand);
-  else if(!$('mapName').value)setMap(cand);
+/* The map name isn't always shown, so maps are recognised by their minimap picture instead.
+   The first time you're on a map, type (or pick) its name; the minimap is remembered and the
+   map is picked automatically every time after that. */
+let lastMini=null,miniMiss=0;
+const minis=store.get('minimaps',[]); // [{name,sig:[...]}]
+function onMinimap(sig){
+  lastMini=sig;if(!minis.length)return;
+  let best=null,bd=1e9;for(const m of minis){const d=sigDiff(sig,m.sig);if(d<bd){bd=d;best=m}}
+  if(best&&bd<14){miniMiss=0;if(best.name!==$('mapName').value){setMap(best.name);setStatus((state==='run'?'Running':'Ready')+' · recognised '+best.name)}}
+  else if(++miniMiss===2&&state==='run')setStatus('Running · new map? Type its name in Current map');
 }
+function learnMap(){
+  const n=$('mapName').value.trim();if(!n||!lastMini)return;
+  const sig=Array.from(lastMini);const ex=minis.find(m=>m.name===n&&sigDiff(m.sig,sig)<14);
+  if(!ex){minis.push({name:n,sig});store.set('minimaps',minis.slice(-400))}
+  $('mapLearn').textContent='Minimap remembered for '+n;
+}
+$('mapName').onchange=()=>{learnMap();loadAutoMobs()};
+// name suggestions (map names match the original game's, from maplestory.io)
+let sugT=0;$('mapName').addEventListener('input',()=>{clearTimeout(sugT);const q=$('mapName').value.trim();if(q.length<3)return;
+  sugT=setTimeout(async()=>{try{const r=await fetch('https://maplestory.io/api/GMS/83/map?count=12&searchFor='+encodeURIComponent(q));const j=await r.json();
+    $('mapList').innerHTML=[...new Set(j.map(m=>m.name.trim()))].map(n=>`<option value="${esc(n)}">`).join('')}catch{}},350)});
 $('bMapSide').onclick=()=>{const w=Math.round(screen.availWidth*.33);window.open(mapUrl(curMap()),'meowdb',`popup,width=${w},height=${screen.availHeight},left=${screen.availWidth-w},top=0`)};
 
 /* ---------- pop-out overlay (always on top) ---------- */
@@ -578,9 +615,9 @@ function parseMobTable(text){
   while((m=re.exec(t))){const name=m[1].trim();if(/^(monster|lv|hp|exp|share)$/i.test(name))continue;out.push({name,lv:+m[2],hp:num(m[3]),exp:num(m[4])})}
   return out;
 }
-function mobsFor(map){const m=store.get(mobKey(map),[]);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length)m=store.get('auto'+mobKey(map),[]);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
 $('mobPaste').oninput=()=>{const mobs=parseMobTable($('mobPaste').value);store.set(mobKey(curMap()),mobs);showMobs();renderKills()};
-function showMobs(){const mobs=mobsFor(curMap());$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
+function showMobs(){const mobs=mobsFor(curMap());const auto=!store.get(mobKey(curMap()),[]).length&&mobs.length;$('mobSrc').textContent=auto?'Monster list from the original game\'s data; paste meowdb\'s table below if it differs.':mobs.length?'Monster list from your meowdb paste.':'';$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
 $('solo').checked=store.get('solo',true);$('solo').onchange=()=>{store.set('solo',$('solo').checked);if(S)S.solo=$('solo').checked;renderKills()};
 const BONUS=[];for(let E=1;E<=6;E++)for(let H=1;H<=E;H++)BONUS.push({E,H,b:Math.min(.3,.1*(E-1))+.05*(H-1)});
 function analyze(ev,mobs,solo){
@@ -617,10 +654,37 @@ function analyze(ev,mobs,solo){
   }
   return{list,party};
 }
+
+/* monster pictures and automatic monster list (public maplestory.io API) */
+const MSIO='https://maplestory.io/api/GMS/83';
+const imgIds=store.get('mobImgIds',{});
+async function mobId(name){
+  if(name in imgIds)return imgIds[name];
+  imgIds[name]=null;
+  try{const j=await (await fetch(MSIO+'/mob?count=20&searchFor='+encodeURIComponent(name))).json();
+    const m=j.find(x=>x.name.trim().toLowerCase()===name.toLowerCase())||null;imgIds[name]=m?m.id:null;store.set('mobImgIds',imgIds);if(m)renderKills()}catch{delete imgIds[name]}
+  return imgIds[name];
+}
+const mobImg=name=>{const id=imgIds[name];if(id===undefined){mobId(name);return ''}return id?`<img class="mobimg" loading="lazy" src="${MSIO}/mob/${id}/render/stand" alt="">`:''};
+async function loadAutoMobs(){
+  const map=curMap();if(map==='Unknown map'||store.get(mobKey(map),[]).length||store.get('auto'+mobKey(map),null))return;
+  try{
+    const list=await (await fetch(MSIO+'/map?count=20&searchFor='+encodeURIComponent(map))).json();
+    const hit=list.find(m=>m.name.trim().toLowerCase()===map.toLowerCase());if(!hit){store.set('auto'+mobKey(map),[]);return}
+    const md=await (await fetch(MSIO+'/map/'+hit.id)).json();
+    const ids=[...new Set((md.mobs||[]).map(m=>m.id))].slice(0,12);
+    const mobs=[];for(const id of ids){const m=await (await fetch(MSIO+'/mob/'+id)).json();mobs.push({name:m.name,lv:m.meta.level,hp:m.meta.maxHP,exp:m.meta.exp});imgIds[m.name]=id}
+    store.set('mobImgIds',imgIds);store.set('auto'+mobKey(map),mobs);showMobs();renderKills();
+  }catch(e){}
+}
 function renderKills(){
   const s=S;const ev=s?s.events:[];const solo=$('solo').checked;
   const {list,party}=analyze(ev,mobsFor(curMap()),solo);
-  $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${esc(x.name)}${x.lv?` <small>Lv ${x.lv}</small>`:''}</td><td class="n">${fmt(x.n)}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Kills appear here as EXP comes in.</small></td></tr>';
+  const t=elapsed(),hr=t/3600000;
+  for(const m of mobsFor(curMap()))if(!list.some(x=>x.name===m.name))list.push({name:m.name,lv:m.lv,each:m.exp,n:0,exp:0,expPct:0,meso:0});
+  $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">Kills/hr</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}${x.lv?` <small>Lv ${x.lv} · ${fmt(x.each)} EXP</small>`:''}</td><td class="n kc">${fmt(x.n)}</td><td class="n">${hr>.003?fmt(x.n/hr):'–'}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Set the map and its monsters appear here with a kill counter.</small></td></tr>';
+  const ic=S?itemCounts(S):[];
+  $('itemsT').innerHTML=ic.length?'<tr><th>Item</th><th class="n">Count</th><th class="n">Per hour</th></tr>'+ic.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n kc itm">${fmt(c)}</td><td class="n">${hr>.003?fmt(c/hr):'–'}</td></tr>`).join(''):'<tr><td><small>Items you loot are listed here with a count.</small></td></tr>';
   $('party').innerHTML=party?[
     party.splitN?`<span class="pill">Your share ≈ ${Math.round(party.share*100)}% of each mob's EXP → about ${party.splitN} people splitting (if similar level and damage)</span>`:'<span class="pill">Paste this map\'s monsters below to estimate the split</span>',
     party.bonusPct!=null?`<span class="pill">Party bonus ≈ ${Math.round(party.bonusPct*100)}% → ${party.eligible||'?'} eligible members · ${fmt(party.fromParty)} EXP from the bonus</span>`:'<span class="pill">No party bonus read yet</span>',
@@ -643,15 +707,16 @@ function parseBar(text){
 function onBarText(text){
   if(!S||state!=='run')return;
   const r=parseBar(text);if(!r){return}
-  const selfCheck=r.need&&r.pct!=null&&Math.abs(r.cur/r.need*100-r.pct)<0.06; // "cur / need [pct%]" agree with each other
+  const needEst=r.need||(S.bar&&S.bar.need)||null;
+  const selfCheck=needEst&&r.pct!=null&&Math.abs(r.cur/needEst*100-r.pct)<0.06; // "cur [pct%]" agrees with the level's EXP total
   if(!selfCheck){if(!barPend||barPend.cur!==r.cur){barPend=r;return}} // otherwise need two identical reads in a row
   const b=S.bar||(S.bar={gained:0,msg:0,last:null,need:null,levels:0});
-  if(b.last==null){b.last=r.cur;b.need=r.need;renderBar();return}
+  if(b.last==null){b.last=r.cur;b.need=r.need||(r.pct>1?Math.round(r.cur*100/r.pct):null);renderBar();return}
   if(r.cur>b.last){const d=r.cur-b.last;if(!b.need||d<b.need)b.gained+=d;b.last=r.cur}
   else if(r.cur<b.last){ // level up (or a death); count it as a level-up only if the % also wrapped
     if(b.need&&(r.pct==null||r.pct<30)){b.gained+=(b.need-b.last)+r.cur;b.levels++}
     b.last=r.cur}
-  if(r.need)b.need=r.need;
+  if(r.need)b.need=r.need;else if(!b.need&&r.pct>1)b.need=Math.round(r.cur*100/r.pct);
   renderBar();
 }
 function renderBar(){
@@ -661,6 +726,20 @@ function renderBar(){
   $('barInfo').innerHTML=`bar <b class="exp">+${fmt(b.gained)}</b> vs messages +${fmt(msg)}${match!=null?` · <b style="color:${match>=97?'var(--exp)':match>=85?'var(--meso)':'var(--warn)'}">${match}% match</b>`:''}${b.levels?` · ${b.levels} level-up${b.levels>1?'s':''}`:''}`;
 }
 $('useBar').checked=store.get('useBar',true);$('useBar').onchange=()=>{store.set('useBar',$('useBar').checked);$('rBar').style.display=$('useBar').checked?'':'none';renderBar()};
+
+/* ---------- save settings for this PC ----------
+   Everything is kept in this browser on this PC. The button takes a named snapshot that is loaded
+   every time the page opens here; the settings code moves it to another PC or browser. */
+const SKEYS=['regions2','profiles2','thr','scanMs','newestTop','useBar','pExp','pMeso','pItem','solo'],XKEYS=['minimaps','mobImgIds'];
+function snapshot(all){const o={};for(const k of all?SKEYS.concat(XKEYS):SKEYS){const v=store.get(k,undefined);if(v!==undefined)o[k]=v}return o}
+function applySnap(o){for(const k of SKEYS.concat(XKEYS))if(k in o)store.set(k,o[k])}
+function showSaved(){const sv=store.get('pcSaved',null);$('savedInfo').textContent=sv?'Saved for this PC on '+new Date(sv.at).toLocaleString()+'. Loads automatically here.':'Not saved yet: boxes are kept, but press Save to lock them in for this PC.'}
+$('bSavePC').onclick=()=>{store.set('pcSaved',{at:Date.now(),s:snapshot()});showSaved();$('bSavePC').textContent='Saved ✓';setTimeout(()=>$('bSavePC').textContent='Save settings for this PC',1500)};
+$('bExport').onclick=()=>copy(btoa(unescape(encodeURIComponent(JSON.stringify(snapshot(true))))),$('bExport'));
+$('bImport').onclick=async()=>{let t='';try{t=await navigator.clipboard.readText()}catch{}
+  if(!t){t=window.prompt('Paste the settings code')||''}
+  try{applySnap(JSON.parse(decodeURIComponent(escape(atob(t.trim())))));location.reload()}catch{$('savedInfo').textContent='That settings code could not be read.'}};
+showSaved();
 /* ---------- restore an interrupted session ---------- */
 const live=store.get('live',null);
 if(live&&live.S){S=live.S;state='paused';setStatus('Restored paused session · share screen to resume');setButtons();onTick()}
