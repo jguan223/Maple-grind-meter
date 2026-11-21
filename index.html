@@ -39,7 +39,7 @@ main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;
 .region:hover{background:#ffffff14}
 .region.small i{width:10px;height:10px}.region.small i[data-h=n],.region.small i[data-h=s],.region.small i[data-h=e],.region.small i[data-h=w]{display:none}
 .region.small i[data-h=nw]{left:-11px;top:-11px}.region.small i[data-h=ne]{right:-11px;top:-11px}.region.small i[data-h=sw]{left:-11px;bottom:-11px}.region.small i[data-h=se]{right:-11px;bottom:-11px}
-.mobimg{width:44px;height:36px;object-fit:contain;vertical-align:middle;margin-right:6px;image-rendering:auto}
+.mobimg{display:inline-block;width:44px;height:36px;object-fit:contain;vertical-align:middle;margin-right:6px;image-rendering:auto}
 .kc{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 #rGain{border-color:var(--exp)}#rGain span,#rGain i{background:var(--exp)}
 #rMap{border-color:var(--item)}#rMap span,#rMap i{background:var(--item)}
@@ -90,7 +90,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
         <label>Scan speed
           <select id="scanMs"><option value="150">Fast (≈6/s)</option><option value="250" selected>Normal (≈4/s)</option><option value="400">Light (≈2.5/s)</option><option value="700">Lightest (≈1.5/s)</option></select>
         </label>
-        <label>Message text brightness cut (0 = auto) <input id="thr" type="number" min="0" max="250" value="140" style="width:70px"></label>
+        <label>Message text brightness cut (0 = automatic, best) <input id="thr" type="number" min="0" max="250" value="0" style="width:70px"></label>
         <button id="bFind" title="Looks for the EXP bar and the minimap title in your game, whatever its size">Find boxes</button>
         <button id="bReset">Reset boxes</button>
         <label><input type="checkbox" id="newestTop"> Newest message is on top</label>
@@ -121,6 +121,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
         <summary>Calibration: what the reader sees</summary>
         <div style="margin-top:8px"><canvas id="ocrView"></canvas></div>
         <pre id="ocrText">(nothing yet)</pre>
+        <small id="ocrRate"></small>
         <div class="row" style="margin-top:8px">
           <label>EXP pattern <input id="pExp" style="width:260px"></label>
           <label>Meso pattern <input id="pMeso" style="width:260px"></label>
@@ -292,6 +293,7 @@ $('bReset').onclick=()=>{R=structuredClone(DEFR);saveRegions();placeBoxes()};
 
 /* ---------- capture ---------- */
 let stream=null,track=null,grabber=null,ocr=null,ocrBusy=false;
+const MSG_PARAMS={tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "};
 $('bShare').onclick=async()=>{
   try{
     stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:10,max:15},cursor:'never'},audio:false});
@@ -305,7 +307,7 @@ $('bShare').onclick=async()=>{
   setStatus('Sharing · loading text reader…');
   if(!ocr){
     ocr=await Tesseract.createWorker('eng',1);
-    await ocr.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "});
+    await ocr.setParameters(MSG_PARAMS);
     Tesseract.createWorker('eng',1).then(w=>{ocr2=w}).catch(()=>{});
   }
   setStatus(state==='run'?'Running':'Ready · press Start');
@@ -316,7 +318,7 @@ function setStatus(t){$('status').textContent=t}
 
 const work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true});
 const tiny=document.createElement('canvas');tiny.width=48;tiny.height=24;const tctx=tiny.getContext('2d',{willReadFrequently:true});
-let lastSig=null,lastOcrAt=0,lastMapAt=0,lastBarAt=0;const BAR_MS=+(new URLSearchParams(location.search).get('barms')||1000);let OCR_SCALE=+(new URLSearchParams(location.search).get('scale')||5);
+let lastSig=null,lastOcrAt=0,lastMapAt=0,lastBarAt=0;const BAR_MS=+(new URLSearchParams(location.search).get('barms')||1000);let OCR_SCALE=+(new URLSearchParams(location.search).get('scale')||3);
 async function grabFrame(){
   const v=$('vid');
   if(grabber&&track&&track.readyState==='live'){try{return await grabber.grabFrame()}catch(e){}}
@@ -351,29 +353,44 @@ const tickW=new Worker(URL.createObjectURL(new Blob([`let t=null;onmessage=e=>{c
 let looping=false;
 function startLoop(){looping=true;tickW.postMessage(+$('scanMs').value)}
 $('scanMs').onchange=()=>{store.set('scanMs',$('scanMs').value);if(looping)startLoop()};
-$('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr2',140);$('thr').onchange=()=>store.set('thr2',$('thr').value);
+$('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr3',0);$('thr').onchange=()=>store.set('thr3',$('thr').value);
 tickW.onmessage=()=>{onTick();scan()};
 
 /* Two text readers: one only for the pickup messages (so it never misses a message while the
    map name or EXP bar is being read), one for the map name and EXP bar. */
 let ocr2=null,side2Busy=false;
 async function scan(){scanMsgs();scanSide()}
+/* On a slower computer one reading can take longer than the gap between two pickups, so a second reader for the
+   pickup messages starts when readings take over 350 ms. Readings may then finish out of order: they are applied
+   to the line tracker in the order the frames were taken, with the time each frame was taken. */
+let ocr3=null,ocr3Busy=false,ocr3Asked=false,msgSeq=0,msgNext=1;const msgDone=new Map(),ocrMs=[];
 async function scanMsgs(){
-  if(ocrBusy||!ocr||!stream||state!=='run')return;
-  ocrBusy=true;
+  if(!ocr||!stream||state!=='run')return;
+  const second=ocrBusy;if(second&&!(ocr3&&!ocr3Busy))return;
+  const w=second?ocr3:ocr;if(second)ocr3Busy=true;else ocrBusy=true;
+  let id=0;
   try{
     const now=performance.now();const src=await grabFrame();if(!src)return;
     adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);
     const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
-    if(diff>1.2||now-lastOcrAt>2500){
-      lastSig=sig;lastOcrAt=now;
-      const c=cropTo(src,R.gain,OCR_SCALE,+$('thr').value);
-      if(src.close)src.close();
-      const {data}=await ocr.recognize(c);
-      showCalib(c,data.text);
-      ingest(data.text);
-    }else if(src.close)src.close();
-  }catch(e){console.warn(e)}finally{ocrBusy=false}
+    if(!(diff>0.6||now-lastOcrAt>1000)){if(src.close)src.close();return}
+    lastSig=sig;lastOcrAt=now;
+    const bk=JSON.stringify(R.gain);if(MT.box!==bk){MT=makeTracker();MT.box=bk;msgDone.clear();msgNext=msgSeq+1}   // box moved: start the line tracking afresh
+    const m=msgCrop(src,R.gain,OCR_SCALE,+$('thr').value);
+    if(src.close)src.close();
+    id=++msgSeq;const box=MT.box;let res=null;
+    try{const {data}=await w.recognize(m.c,{},{tsv:true,text:true,blocks:false});if(MT.box===box)res={lines:tsvLines(data.tsv,OCR_SCALE,m),t:now/1000,sh:m.sh};showCalib(m.c,data.text)}
+    finally{if(MT.box===box)msgDone.set(id,res);ocrMs.push(performance.now()-now);if(ocrMs.length>12)ocrMs.shift()}
+    while(msgDone.has(msgNext)){const r=msgDone.get(msgNext);msgDone.delete(msgNext);msgNext++;if(!r)continue;
+      MGM.lastLines=r.lines;
+      if(MGM.rec)MGM.rec.push({t:+r.t.toFixed(3),sh:r.sh,lines:r.lines.map(l=>({x0:+l.x0.toFixed(1),y0:+l.y0.toFixed(1),x1:+l.x1.toFixed(1),y1:+l.y1.toFixed(1),text:l.text,conf:Math.round(l.conf),int:Math.round(l.int)}))});
+      for(const p of MT.update(r.lines,r.t,$('newestTop').checked,r.sh))record(p);
+    }
+  }catch(e){console.warn(e)}finally{if(second)ocr3Busy=false;else ocrBusy=false}
+  const ms=[...ocrMs].sort((x,y)=>x-y)[ocrMs.length>>1]||0;
+  if(!ocr3Asked&&ocrMs.length>=8&&ms>350&&+$('scanMs').value<=250){ocr3Asked=true;
+    Tesseract.createWorker('eng',1).then(async x=>{await x.setParameters(MSG_PARAMS);ocr3=x}).catch(()=>{})}
+  if(ocrMs.length&&$('ocrRate'))$('ocrRate').textContent=`Pickup reader: ${Math.round(ms)} ms per reading${ocr3?', 2 readers':''}.`;
 }
 async function scanSide(){
   const w=ocr2||ocr;if(side2Busy||!w||!stream)return;
@@ -388,7 +405,7 @@ async function scanSide(){
     if(wantMap){lastMapAt=now;sig=signature(src,R.map);cm=document.createElement('canvas');const t=cropTo(src,R.map,4,0);cm.width=t.width;cm.height=t.height;cm.getContext('2d').drawImage(t,0,0)}
     if(src.close)src.close();
     if(cb){await w.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});const {data}=await w.recognize(cb);onBarText(data.text)}
-    if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'-:. "});const {data}=await w.recognize(cm);if(!(await onMapTitle(data.text)))onMinimap(sig);else lastMini=sig}
+    if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'-:.<>()& "});const {data}=await w.recognize(cm);await onMapTitle(data.text);lastMini=sig}
   }catch(e){console.warn(e)}finally{side2Busy=false}
 }
 /* ---------- find the boxes automatically ----------
@@ -496,6 +513,156 @@ function showCalib(c,text){
   const v=$('ocrView');v.width=c.width;v.height=c.height;v.getContext('2d').drawImage(c,0,0);$('ocrText').textContent=text||'(no text)';
 }
 
+/* ---------- pickup messages, read line by line ----------
+   MapleStory Classic shows each pickup as one line at the bottom right: "You received EXP (+28)",
+   "Maple Leaf x1 earned. (Etc)". A new line appears in the bottom slot and pushes the older lines up
+   one slot each; they fade out after about 3 seconds. Each scan's lines are matched to the previous
+   scan's by trying "everything moved up k slots" for every k, and keeping the k that best explains the
+   text and the fading (a line only ever gets dimmer, a new line is always bright). So every message is
+   counted exactly once, even when the same message ("You received EXP (+28)") repeats.
+   A message is counted once two reads of it agree, or when it scrolls away. */
+const nrm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+const tsim=(a,b)=>{a=nrm(a);b=nrm(b);if(!a||!b)return 0;return 1-lev(a,b)/Math.max(a.length,b.length)};
+const mwork=document.createElement('canvas'),mctx=mwork.getContext('2d',{willReadFrequently:true});
+// Crop the message box: an upscaled black-on-white image for the reader (text = clearly brighter than
+// its surroundings, so bright or busy backgrounds behind the text don't turn into blobs), plus the
+// original pixels to measure how faded each line is.
+function msgCrop(src,r,scale,cut){
+  const W=src.videoWidth||src.width,H=src.videoHeight||src.height;
+  const sx=Math.max(0,Math.round(r.x*W)),sy=Math.max(0,Math.round(r.y*H)),sw=Math.max(8,Math.min(W-sx,Math.round(r.w*W))),sh=Math.max(8,Math.min(H-sy,Math.round(r.h*H)));
+  mwork.width=sw;mwork.height=sh;mctx.drawImage(src,sx,sy,sw,sh,0,0,sw,sh);
+  const d1=mctx.getImageData(0,0,sw,sh).data,L1=new Float32Array(sw*sh);for(let i=0,j=0;j<L1.length;i+=4,j++)L1[j]=.299*d1[i]+.587*d1[i+1]+.114*d1[i+2];
+  const w2=Math.round(sw*scale),h2=Math.round(sh*scale);work.width=w2;work.height=h2;
+  wctx.imageSmoothingEnabled=true;wctx.imageSmoothingQuality='high';wctx.drawImage(src,sx,sy,sw,sh,0,0,w2,h2);
+  const im=wctx.getImageData(0,0,w2,h2),d=im.data,n=w2*h2,L=new Float32Array(n);for(let i=0,j=0;j<n;i+=4,j++)L[j]=.299*d[i]+.587*d[i+1]+.114*d[i+2];
+  if(cut>0){for(let j=0;j<n;j++){const v=L[j]>cut?0:255;d[j*4]=d[j*4+1]=d[j*4+2]=v}}
+  else{const rad=Math.max(2,Math.round(2.5*scale)),W1=w2+1,I=new Float64Array(W1*(h2+1));
+    for(let y=0;y<h2;y++){let s=0;for(let x=0;x<w2;x++){s+=L[y*w2+x];I[(y+1)*W1+x+1]=I[y*W1+x+1]+s}}
+    for(let y=0;y<h2;y++){const y0=Math.max(0,y-rad),y1=Math.min(h2,y+rad+1);for(let x=0;x<w2;x++){const x0=Math.max(0,x-rad),x1=Math.min(w2,x+rad+1),j=y*w2+x;
+      const m=(I[y1*W1+x1]-I[y0*W1+x1]-I[y1*W1+x0]+I[y0*W1+x0])/((x1-x0)*(y1-y0));const v=L[j]>150&&L[j]>m+18?0:255;d[j*4]=d[j*4+1]=d[j*4+2]=v}}}
+  wctx.putImageData(im,0,0);return{c:work,L1,sw,sh};
+}
+// the reader's words grouped into lines, in the crop's own pixels, with how bright (unfaded) each line is
+function tsvLines(tsv,scale,m){
+  const by=new Map();
+  for(const l of (tsv||'').split('\n')){const a=l.split('\t');if(a.length<12||!a[11].trim())continue;const k=a[2]+'.'+a[3]+'.'+a[4];
+    const x0=+a[6]/scale,y0=+a[7]/scale,x1=(+a[6]+ +a[8])/scale,y1=(+a[7]+ +a[9])/scale;const o=by.get(k);
+    if(o){o.x0=Math.min(o.x0,x0);o.y0=Math.min(o.y0,y0);o.x1=Math.max(o.x1,x1);o.y1=Math.max(o.y1,y1);o.t.push(a[11]);o.c.push(+a[10])}else by.set(k,{x0,y0,x1,y1,t:[a[11]],c:[+a[10]]})}
+  const {L1,sw,sh}=m,out=[];
+  for(const o of by.values()){
+    const xa=Math.max(2,Math.floor(o.x0)-1),xb=Math.min(sw-3,Math.ceil(o.x1)+1),ya=Math.max(2,Math.floor(o.y0)-1),yb=Math.min(sh-3,Math.ceil(o.y1)+1),vals=[];
+    for(let y=ya;y<=yb;y++)for(let x=xa;x<=xb;x++){let mn=255;for(let dy=-2;dy<=2;dy++){const row=(y+dy)*sw;for(let dx=-2;dx<=2;dx++){const q=L1[row+x+dx];if(q<mn)mn=q}}vals.push(L1[y*sw+x]-mn)}
+    vals.sort((a,b)=>b-a);const top=vals.slice(0,Math.max(5,Math.round(vals.length*.12)));
+    out.push({x0:o.x0,y0:o.y0,x1:o.x1,y1:o.y1,text:o.t.join(' '),conf:o.c.reduce((a,b)=>a+b,0)/o.c.length,int:top.length?top.reduce((a,b)=>a+b,0)/top.length:0});
+  }
+  return out;
+}
+// one message line -> what it says. Classic: "You received EXP (+28)", "Maple Leaf x1 earned. (Etc)",
+// "Bubbling's Hug... x1 earned. (Etc)" (long names are cut short with "..."). Other wordings fall back to parseLine.
+function parseMsg(text){
+  const s=String(text).replace(/[‘’`]/g,"'").replace(/[|_~]/g,' ').replace(/\s+/g,' ').trim();if(nrm(s).length<5)return null;
+  const low=s.toLowerCase();
+  const amts=()=>{const out=[],re=/\(\s*[+t*]?\s*([\d][\d,.]{0,9})\s*\)?|\+\s*([\d][\d,.]{0,9})/g;let m;while((m=re.exec(s)))out.push(num(m[1]||m[2]));return out.filter(v=>v>0)};
+  if(/[mn]es[o0]|meso/.test(low)){const a=amts();const v=a[0]||num((/(\d[\d,]{0,9})/.exec(s)||[])[1]||'');return v>0?{type:'meso',value:v,key:'m'+v}:null}
+  if(/earn|eamed|arned|armed|camed|cained|varned|\((?:etc|use|equip|setup|cash|ete|eto|efc|eic|et|ei)\)?[.,]?\s*$/i.test(s)&&!/\bexp\b|\(\s*\+/i.test(s)){
+    let r=s,cat=null;const em=/\s*\S{0,3}(?:rned|rmed|med|ned|ared)\b.*$/i.exec(r);
+    if(em){const tail=em[0];const cm=/\(?\s*([A-Za-z]{2,6})\s*\)?[.,]?\s*$/.exec(tail);if(cm)cat=cm[1];r=r.slice(0,em.index)}
+    else{const cm=/\(\s*([A-Za-z]{2,6})\s*\)?[.,]?\s*$/.exec(r);if(cm){cat=cm[1];r=r.slice(0,cm.index)}}
+    let q=1,qm=/([x×%*+:])\s*(\d{1,4})\s*[.,]?\s*$/i.exec(r)||/(\s)(\d{1,4})\s*[.,]?\s*$/.exec(r);
+    if(qm){q=+qm[2];if(qm[1]===' '&&qm[2].length>1)q=+qm[2].slice(-1);r=r.slice(0,qm.index)}
+    const trunc=/(\.\.|…|[.,]\s*$)/.test(r.trim());
+    const name=r.replace(/[.,…:;\s]+$/,'').replace(/^[^A-Za-z0-9']+/,'').trim();
+    if(nrm(name).length<3)return null;
+    const canon=canonItem(name,trunc),known=!DB||canon!==name||(DB.items||[]).includes(name);
+    return{type:'item',value:1,qty:q||1,name:canon,raw:s,cat,unk:!known,key:'i'+nrm(canon)+'x'+(q||1)};
+  }
+  const expTok=/e\s?x\s?[pf]|\b[eb][rx][pf]\b|experi/i.test(s);
+  if(expTok||/\brece|receiv/i.test(s)){let a=amts(),weak=!expTok;   // "received" alone could be a misread meso line
+    if(!a.length){const m=expTok&&/(\d[\d,]{0,8})\D{0,3}$/.exec(s);if(!m)return null;a=[num(m[1])];weak=true}   // "(+28)" read as "L128)" or "C28)"
+    const v=a[0],bonus=a[1]||0;return{type:'exp',value:v+bonus,base:v,bonus,weak,key:'e'+v+'_'+bonus}}
+  return parseLine(s);
+}
+// solo: an EXP amount must be one of this map's monsters'; a single misread digit is put right ("283" -> 28)
+function fixAmount(p){
+  if(!p)return p;
+  if(p.type==='exp'&&!p.bonus&&$('solo').checked&&mobExpSet.size&&!mobExpSet.has(p.value)){
+    const c=new Set();for(const x of edits1(String(p.value)))if(x&&x[0]!=='0'&&mobExpSet.has(+x))c.add(+x);
+    if(c.size===1){const v=[...c][0];p={...p,value:v,base:v,key:'e'+v+'_0',fixed:true}}
+  }
+  if(p.type==='meso'){const rg=mesoRange();
+    if(rg&&(p.value<rg[0]*.5||p.value>rg[1]*3)){const c=new Set();for(const x of edits1(String(p.value)))if(x&&x[0]!=='0'&&+x>=rg[0]&&+x<=rg[1])c.add(+x);
+      if(c.size===1){const v=[...c][0];p={...p,value:v,key:'m'+v,fixed:true}}}}
+  return p;
+}
+function mesoRange(){let lo=Infinity,hi=0;for(const m of mobsFor(curMap())){const x=DB&&DB.mobs[m.name];if(x&&x.meso&&x.meso[1]>0){lo=Math.min(lo,x.meso[0]);hi=Math.max(hi,x.meso[1])}}return hi>0?[lo,hi]:null}
+function makeTracker(){
+  const T={stack:[],bottom:null,pitch:null,H:null,right:null,fresh:null,maxSlot:7,first:true,lastT:null,id:1,hs:[],rs:[],ps:[],bs:[],fs:[]};
+  const med=a=>{const b=[...a].sort((x,y)=>x-y);return b.length?b[b.length>>1]:null};
+  T.update=function(lines,now,flip,sh){
+    const dt=T.lastT==null?0.25:Math.max(0.05,now-T.lastT);T.lastT=now;const wasFirst=T.first;T.first=false;
+    if(flip)lines=lines.map(l=>({...l,y0:sh-l.y1,y1:sh-l.y0}));
+    for(const l of lines)if(nrm(l.text).length>=8&&l.conf>=45){T.hs.push(l.y1-l.y0);T.rs.push(l.x1)}
+    T.hs=T.hs.slice(-40);T.rs=T.rs.slice(-40);if(!T.hs.length)return[];
+    T.H=med(T.hs);T.right=med(T.rs);
+    // message lines are right-aligned: drop stray text elsewhere in the box
+    const L=lines.filter(l=>l.x1>=T.right-T.H*1.2&&(l.y1-l.y0)<=T.H*1.6&&nrm(l.text).length>=3).map(l=>({...l,yc:(l.y0+l.y1)/2})).sort((a,b)=>a.yc-b.yc);
+    const okp=l=>nrm(l.text).length>=5&&(l.conf>40||l.int>=(T.fresh||200)*.75);
+    for(let i=1;i<L.length;i++){const d=L[i].yc-L[i-1].yc;if(d>T.H*.8&&d<T.H*2.2&&okp(L[i])&&okp(L[i-1]))T.ps.push(d)}
+    T.ps=T.ps.slice(-40);T.pitch=T.ps.length?med(T.ps):T.H*1.25;
+    const fr=L.filter(l=>l.int>=(T.fresh||0)*.9);if(fr.length){T.bs.push(Math.max(...fr.map(l=>l.yc)));T.bs=T.bs.slice(-15)}
+    if(!T.bs.length)return[];
+    const mb=med(T.bs);T.bottom=Math.max(...T.bs.filter(x=>x>=mb-T.pitch*.5));
+    T.maxSlot=Math.max(1,Math.floor((T.bottom-T.H*.5)/T.pitch));   // slots above this are outside the box
+    const cur=new Map();
+    for(const l of L){const j=Math.round((T.bottom-l.yc)/T.pitch);if(j<0||j>T.maxSlot+1)continue;const o=cur.get(j);if(!o||l.int*nrm(l.text).length>o.int*nrm(o.text).length)cur.set(j,{...l,slot:j,wd:l.x1-l.x0})}
+    for(const [j,c] of cur)if(j===0||c.int>(T.fresh||0))T.fs.push(c.int);
+    T.fs=T.fs.slice(-30);T.fresh=[...T.fs].sort((a,b)=>b-a).slice(0,5).reduce((a,b,i,arr)=>a+b/arr.length,0)||null;
+    const F=T.fresh||180,decay=45*dt+12,ub=Math.max(-8,8-12*dt),out=[];   // a line fades by at most `decay` between scans, and never brightens by more than `ub`
+    if(wasFirst){for(const [j,c] of cur)T.stack.push({id:T.id++,slot:j,int:c.int,text:c.text,best:c.text,bestInt:c.int,wd:c.wd,full:c.x1>=T.right-T.H*.8,reads:[],counted:true,miss:0});return out}
+    // how many new lines pushed the stack up since the last scan? Try every k and keep the one that best explains
+    // what is on screen now: each old line k slots further up with the same text, the same width (lines are
+    // right-aligned) and a brightness that only ever drops, and a fresh bright line in each of the k new slots.
+    const H=T.H,full=c=>c.x1>=T.right-H*.8,q=c=>Math.min(1,Math.max(0,(c.int-F*.6)/(F*.3)));   // faded lines are often misread, so their text counts for less
+    for(const c of cur.values()){c.p=c.int>=F*.8?fixAmount(parseMsg(c.text)):null;c.cp=c.p&&!c.p.weak?c.p:null}   // what each clearly readable line says
+    let best=null;const maxCur=cur.size?Math.max(...cur.keys()):-1,all=[];
+    for(let k=0;k<=Math.min(10,maxCur+1);k++){let cost=k*.06;
+      for(let j=0;j<k;j++){const c=cur.get(j);if(!c){cost+=1;continue}cost+=.35;const lim=F-decay;if(c.int<lim)cost+=Math.min(1.5,(lim-c.int)/10)}
+      for(const e of T.stack){const s=e.slot+k,c=cur.get(s);
+        if(s>T.maxSlot){cost+=.05;continue}
+        if(!c){const ei=e.int-20*dt;cost+=e.ph?.15:ei>F*.8?.6:ei>F*.65?.3:.1;continue}   // not found: unlikely for a line that should still be bright
+        if(e.ph)continue;
+        const w=q(c);let sim=Math.max(tsim(e.text,c.text),e.best?tsim(e.best,c.text):0);if(e.lp&&c.cp&&e.lp.key===c.cp.key)sim=Math.max(sim,.8);cost+=(1-sim)*w;
+        if(e.full&&full(c)){const dw=Math.abs(e.wd-c.wd)/H;if(dw>.35)cost+=Math.min(1.2,(dw-.35)*2)*Math.max(c.wd<e.wd?.3:.6,w)}   // a faint line may lose its left end, never gain width
+        if(e.lp&&c.cp){if(e.lp.type!==c.cp.type)cost+=.6*w;else if(e.lp.key!==c.cp.key&&!(c.cp.unk||e.lp.unk))cost+=.35*w}   // two clear reads of one line say the same thing
+        const up=c.int-e.int-ub;if(up>0)cost+=Math.min(1.5,up/8);
+        const dn=e.int-c.int-decay-(k?10:0);if(dn>0)cost+=Math.min(.8,dn/25)}
+      for(const [j,c] of cur)if(j>=k&&!T.stack.some(e=>e.slot+k===j))cost+=c.int>F*.8?.5:c.int>F*.65?.25:.1;
+      all.push(k+'='+cost.toFixed(2));if(!best||cost<best.cost-1e-9)best={k,cost}}
+    const k=best?best.k:0,ns=[];
+    if(MGM.dbg)MGM.dbg.push({t:+now.toFixed(2),k,costs:all,F:Math.round(F),pitch:+T.pitch.toFixed(1),bottom:Math.round(T.bottom),prev:T.stack.map(e=>e.slot+':'+Math.round(e.int)+':'+(e.ph?'?':'')+nrm(e.text).slice(0,14)),cur:[...cur].map(([j,c])=>j+':'+Math.round(c.int)+':'+nrm(c.text).slice(0,14))});
+    const see=(e,c)=>{e.int=c.int;e.text=c.text;e.ph=false;e.miss=0;if(c.cp)e.lp=c.cp;if(c.int>=(e.bestInt||0)){e.best=c.text;e.bestInt=c.int}if(full(c)&&c.int>F*.6){e.wd=c.wd;e.full=true}};
+    for(let j=0;j<k;j++){const c=cur.get(j),e={id:T.id++,slot:j,int:F*.85,text:'',wd:0,full:false,reads:[],counted:false,miss:c?0:1,ph:!c,born:now};if(c)see(e,c);ns.push(e)}
+    for(const e of T.stack){e.slot+=k;const c=cur.get(e.slot);if(c)see(e,c);else e.miss++;
+      if(e.miss<3&&e.slot<=T.maxSlot+1)ns.push(e);else if(!e.counted)out.push(...commit(e,true))}
+    for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.7){const p=c.p||fixAmount(parseMsg(c.text));if(p)e.reads.push({...p,w:Math.max(.05,c.conf/100)*(c.int/F)*(p.weak&&!p.fixed?.5:1)})}}
+    T.stack=ns;if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key)});
+    for(const e of T.stack)if(!e.counted&&(e.slot>=3||e.int<F*.72||e.reads.length))out.push(...commit(e,e.slot>=3||e.int<F*.72));
+    if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key+'#'+(o.id||''))});
+    return out;
+  };
+  function commit(e,force){
+    if(!e.reads.length){if(force)e.counted=true;return[]}
+    const by=new Map();
+    for(const r of e.reads){const o=by.get(r.key)||{n:0,w:0,rs:[]};o.n+=r.unk?.34:1;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)?1:0);o.rs.push(r);by.set(r.key,o)}
+    const top=[...by.values()].sort((a,b)=>b.n-a.n||b.w-a.w)[0];
+    if(!force&&top.n<2)return[];
+    e.counted=true;const r=top.rs.sort((a,b)=>b.w-a.w)[0];
+    return[r.type==='item'&&r.unk&&DB?{...r,name:'Unreadable item',key:'iunreadable',id:e.id,born:e.born}:{...r,id:e.id,born:e.born}];
+  }
+  return T;
+}
+let MT=makeTracker();
+
 /* ---------- de-duplicating messages that stay on screen ----------
    Pickup messages stack up: a new one appears at the bottom and older ones move up and fade.
    Each scan is lined up against the previous one (longest common subsequence); only lines
@@ -545,7 +712,7 @@ $('bStart').onclick=()=>{
   unlockAudio();
   if(state==='idle'||state==='done'){S=newSession();S.maps[curMap()]=0;$('feed').innerHTML='<small>Nothing yet.</small>'}
   S.limitMin=+$('tMin').value||0;
-  state='run';runStart=Date.now();lastSig=null;barPend=null;if(S.bar)S.bar.last=null;
+  state='run';runStart=Date.now();lastSig=null;barPend=null;if(S.bar)S.bar.last=null;MT=makeTracker();
   if(Notification&&Notification.permission==='default'&&S.limitMin)Notification.requestPermission();
   setButtons();setStatus('Running');
 };
@@ -577,13 +744,14 @@ function onTick(){
   else $('remain').textContent='No time limit';
   if(!onTick.k||Date.now()-onTick.k>2000){onTick.k=Date.now();renderKills();renderBar()}
   // EXP bar not readable for a while (window moved or resized): look for it again, at most once a minute
-  if($('useBar').checked&&S&&(!S.bar||S.bar.last==null)&&Date.now()-runStart>20000&&Date.now()-(onTick.f||0)>60000){onTick.f=Date.now();autoFind(false)}
+  const barStale=S&&S.bar&&S.bar.last!=null&&Date.now()-(S.bar.lastAt||0)>20000&&S.events.some(e=>e.type==='exp'&&e.t>t-20000);   // messages show EXP but the bar hasn't moved
+  if($('useBar').checked&&S&&(!S.bar||S.bar.last==null||barStale)&&Date.now()-runStart>20000&&Date.now()-(onTick.f||0)>60000){onTick.f=Date.now();autoFind(false)}
   // EXP is rising but no pickup message has been read for a while: look for where the messages are
   else if(!manualBox.gain&&S&&S.bar&&S.bar.gained>(onTick.g||0)&&Date.now()-(onTick.m||runStart)>15000&&(!S.events.length||elapsed()-S.events[S.events.length-1].t>45000)){onTick.m=Date.now();onTick.g=S.bar.gained;findMsgBox(false)}
   renderPip();
 }
 // EXP total: when the EXP bar is being read, its rise is exact; message EXP fills in any time the bar wasn't tracked
-function expTotal(s){const t=totals(s.events).exp;const b=s.bar;return b&&b.gained>0&&s.barTotals!==false?b.gained+Math.max(0,t-(b.msg||0)):t}
+function expTotal(s){const t=totals(s.events).exp;const b=s.bar;return b&&b.gained>0&&s.barTotals!==false?Math.max(t,b.gained+Math.max(0,t-(b.msg||0))):t}   // both can only miss EXP (a misread is rejected), so the larger one is closer
 function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items+=e.qty||1}return{exp,meso,items}}
 
 /* ---------- alarm ---------- */
@@ -626,9 +794,9 @@ function showSummary(s){
    <h2 style="margin-top:14px">Every 30 minutes</h2>
    <div class="scroll"><table><tr><th>Time</th><th class="n">EXP</th><th class="n">Mesos</th><th class="n">Items</th></tr>${rows}</table></div>
    <h2 style="margin-top:14px">Kills by monster</h2>
-   ${(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false,s.bar);return (a.list.length?`<table>${a.list.map(x=>`<tr><td>${esc(x.name)}</td><td class="n">${fmt(x.n)} kills</td><td class="n exp">${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%)</td><td class="n meso">~${fmt(x.meso)} mesos</td></tr>`).join('')}</table>`:'<small>No kills read.</small>')+(a.party?`<p><small>Party: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?` (≈${a.party.splitN} people splitting)`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from party bonus`:''}.</small></p>`:'')})()}
+   ${(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false,s.bar);return (a.list.length?`<table>${a.list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}</td><td class="n">${fmt(x.n)} kills</td><td class="n exp">${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%)</td><td class="n meso">~${fmt(x.meso)} mesos</td></tr>`).join('')}</table>`:'<small>No kills read.</small>')+(a.party?`<p><small>Party: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?` (≈${a.party.splitN} people splitting)`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from party bonus`:''}.</small></p>`:'')})()}
    <h2 style="margin-top:14px">Drops picked up</h2>
-   ${d.items.length?`<table>${d.items.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n">×${c}</td></tr>`).join('')}</table>`:'<small>No item pickups were read.</small>'}
+   ${d.items.length?`<table>${d.items.map(([n,c])=>`<tr><td>${itemImg(n)}${esc(n)}</td><td class="n">×${c}</td></tr>`).join('')}</table>`:'<small>No item pickups were read.</small>'}
    <p><a href="${mapUrl(d.map)}" target="_blank" rel="noopener">See ${esc(d.map)} drops and prices on meowdb ↗</a></p>`;
   $('dlg').showModal();
 }
@@ -685,22 +853,39 @@ $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl
 const lev=(a,b)=>{a=a.toLowerCase();b=b.toLowerCase();const d=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]};
 const nameCache=new Map();
 // a misread item name ("SnanlSnell") is matched to the closest drop of this map's monsters ("Snail Shell")
-function canonItem(n){if(!DB||n.length<3)return n;const names=new Set();for(const m of mobsFor(curMap()))for(const d of ((DB.mobs[m.name]||{}).drops||[]))names.add(d[0]);
-  let best=n,bs=.34;for(const x of names){const sc=lev(x.replace(/\s/g,''),n.replace(/\s/g,''))/Math.max(x.length,n.length);if(sc<bs){bs=sc;best=x}}return best}let titleVotes=[];
+// a misread or shortened item name ("Jubbling's Hug...", "Maple Leat") is matched to the database's items,
+// this map's drops first. Shortened names are compared with the start of each item name.
+const itemCache=new Map();
+function canonItem(n,trunc){
+  const o=nrm(n);if(!DB||o.length<3)return n;const ck=o+'|'+!!trunc;if(itemCache.has(ck))return itemCache.get(ck);
+  const score=x=>{const c=nrm(x);if(!c)return 9;let b=lev(o,c)/Math.max(o.length,c.length);
+    if(trunc||c.length>o.length+2)for(let L=Math.max(4,o.length-2);L<=Math.min(c.length,o.length+2);L++){const t=c.slice(0,L);b=Math.min(b,lev(o,t)/Math.max(o.length,L))}
+    return b+Math.abs(c.length-o.length)*.0005};
+  let best=n,bs=9;const near=new Set();
+  for(const m of mobsFor(curMap()))for(const d of ((DB.mobs[m.name]||{}).drops||[]))near.add(d[0]);
+  if(S)for(const e of S.events)if(e.type==='item')near.add(e.name);
+  for(const x of near){const sc=score(x)-.08;if(sc<bs){bs=sc;best=x}}
+  if(bs>.1)for(const x of (DB.items||[])){const sc=score(x);if(sc<bs){bs=sc;best=x}}
+  const out=bs<=.32?best:n;if(itemCache.size>2000)itemCache.clear();itemCache.set(ck,out);return out;
+}
+let titleVotes=[];
+// The minimap title's second line is the map ("Line 1 <Area 1>"); the wiki writes it "Line 1 (Area 1)", so names
+// are compared on letters and digits only. With the database loaded, only real map names are ever accepted.
 async function canonMap(street,map){
-  if(!DB)return null;const key=street+'|'+map;if(nameCache.has(key))return nameCache.get(key);
-  let best=null,bs=1;for(const n of Object.keys(DB.maps)){const sc=lev(n,map)/Math.max(n.length,map.length);if(sc<bs){bs=sc;best={name:n}}}
-  const out=bs<0.35?best:null;nameCache.set(key,out);return out;
+  if(!DB)return null;const o=nrm(map);if(o.length<3)return null;if(nameCache.has(o))return nameCache.get(o);
+  let best=null,bs=1;for(const n of Object.keys(DB.maps)){const c=nrm(n);if(!c)continue;const sc=lev(o,c)/Math.max(o.length,c.length);if(sc<bs){bs=sc;best={name:n,score:sc}}}
+  const out=bs<=0.25?best:null;nameCache.set(o,out);return out;
 }
 async function onMapTitle(text){
-  const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z' :\-.]/g,' ').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l));
+  const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z0-9' :\-.<>()&]/g,' ').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l));
   if(!lines.length)return false;
-  const map=lines.length>=2?lines[1]:lines[0],street=lines.length>=2?lines[0]:'';
-  const hit=await canonMap(street,map);
-  const name=hit?hit.name:(map.length>=5?map:null);if(!name)return false;
+  let name=null;
+  if(DB){let best=null;for(let i=0;i<lines.length;i++){const h=await canonMap('',lines[i]);if(!h)continue;const sc=h.score-(i===1?.05:0);if(!best||sc<best.sc)best={...h,sc}}if(best)name=best.name}
+  else{const map=lines.length>=2?lines[1]:lines[0];if(map.length>=5)name=map}
+  if(!name)return false;
   titleVotes.push(name);titleVotes=titleVotes.slice(-3);
   if(Date.now()-(manualAt||0)<60000)return true;
-  if((titleVotes.filter(v=>v===name).length>=2||!$('mapName').value)&&name!==$('mapName').value){
+  if(titleVotes.filter(v=>v===name).length>=(DB?2:3)&&name!==$('mapName').value){
     setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
   return true;
 }
@@ -770,7 +955,18 @@ function parseMobTable(text){
   while((m=re.exec(t))){const name=m[1].trim();if(/^(monster|lv|hp|exp|share)$/i.test(name))continue;out.push({name,lv:+m[2],hp:num(m[3]),exp:num(m[4])})}
   return out;
 }
-function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length&&DB&&DB.maps[map])m=DB.maps[map].mobs.map(([n,c])=>{const x=DB.mobs[n]||{};return{name:n,lv:x.lv||0,hp:x.hp||0,exp:x.exp||0,spawns:c}}).filter(x=>x.exp>0);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length&&DB&&DB.maps[map])m=DB.maps[map].mobs.map(([n,c])=>{const x=DB.mobs[n]||{};return{name:n,lv:x.lv||0,hp:x.hp||0,exp:x.exp||0,spawns:c}}).filter(x=>x.exp>0);
+  if(!m.length&&map===curMap())m=guessMobs();
+  if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+// map not known yet: an EXP amount seen 3+ times that only one monster in the database gives names that monster
+let guessC={n:-1,m:[]};
+function guessMobs(){
+  if(!DB||!S||!$('solo').checked)return [];if(guessC.n===S.events.length)return guessC.m;
+  const c={};for(const e of S.events)if(e.type==='exp'&&!e.bonus)c[e.value]=(c[e.value]||0)+1;
+  const out=[];for(const [v,n] of Object.entries(c)){if(n<3)continue;const ms=Object.entries(DB.mobs).filter(([,x])=>x.exp===+v);
+    if(ms.length===1){const [k,x]=ms[0];out.push({name:k,lv:x.lv||0,hp:x.hp||0,exp:x.exp,spawns:1,guess:true})}}
+  guessC={n:S.events.length,m:out};return out;
+}
 $('mobPaste').oninput=()=>{const mobs=parseMobTable($('mobPaste').value);store.set(mobKey(curMap()),mobs);showMobs();renderKills()};
 function showMobs(){const mobs=mobsFor(curMap());const auto=!store.get(mobKey(curMap()),[]).length&&mobs.length;$('mobSrc').textContent=auto?'Monsters and spawns from the Classic database.':mobs.length?'Monster list from your paste.':'';$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
 $('solo').checked=store.get('solo',true);$('solo').onchange=()=>{store.set('solo',$('solo').checked);if(S)S.solo=$('solo').checked;renderKills()};
@@ -792,11 +988,11 @@ function analyze(ev,mobs,solo,bar){
     else rows.set('v'+g.v,{name:fmt(g.v)+' EXP each',lv:0,each:g.v,n:g.n,exp:g.total});
   }
   let list=[...rows.values()];if(unknown.n)list.push(unknown);
-  // Solo, the EXP bar is the better source when pickup messages were missed (off-screen or faded):
+  // Solo, the EXP bar is the better source unless it clearly missed rises the messages saw:
   // each rise of the bar was split into this map's monsters by their EXP.
   const msgKillExp=list.filter(x=>x!==unknown).reduce((a,b)=>a+b.exp,0);
   let src='messages';
-  if(solo&&bar&&bar.killExp>0&&bar.killExp>msgKillExp*1.05){src='bar';
+  if(solo&&bar&&bar.killExp>0&&bar.killExp>=msgKillExp*0.97){src='bar';
     list=Object.entries(bar.kills).map(([name,k])=>{const mb=mobs.find(m=>m.name===name)||{};return{name,lv:mb.lv||0,each:mb.exp||(k.n?k.exp/k.n:0),n:k.n,exp:k.exp}});
     if(bar.other>0)list.push({name:'Other EXP (quests, level-up, unmatched)',n:0,exp:bar.other,lv:0,each:0})}
   const totExp=list.reduce((a,b)=>a+b.exp,0)||1,totMeso=totals(ev).meso;
@@ -834,7 +1030,7 @@ async function buildDB(){
   const members=async cat=>{let out=[],c='';do{const j=await wapi(`action=query&list=categorymembers&cmtitle=Category:${encodeURIComponent(cat)}&cmlimit=500&cmnamespace=0${c?'&cmcontinue='+encodeURIComponent(c):''}`);out.push(...j.query.categorymembers.map(m=>m.title));c=j.continue&&j.continue.cmcontinue}while(c);return out};
   const contents=async titles=>{const out={};for(let i=0;i<titles.length;i+=50){const j=await wapi('action=query&prop=revisions&rvprop=content&rvslots=main&redirects=1&titles='+encodeURIComponent(titles.slice(i,i+50).join('|')));for(const p of Object.values(j.query.pages))if(p.revisions)out[p.title]=p.revisions[0].slots.main['*'];await wait(400)}return out};
   const urls=async files=>{const out={};for(let i=0;i<files.length;i+=50){const b=files.slice(i,i+50);const j=await wapi('action=query&prop=imageinfo&iiprop=url&titles='+encodeURIComponent(b.map(f=>'File:'+f).join('|')));const norm={};for(const n of (j.query.normalized||[]))norm[n.to]=n.from;for(const p of Object.values(j.query.pages))if(p.imageinfo)out[(norm[p.title]||p.title).replace(/^File:/,'')]=p.imageinfo[0].url.replace(WIMG,'');await wait(300)}return out};
-  const mw=await contents(await members('Monsters')),pw=await contents(await members('Maps'));
+  const mw=await contents(await members('Monsters')),pw=await contents(await members('Maps')),items=await members('Items');
   const mobs={};for(const [t,w] of Object.entries(mw)){if(!/Infobox monster/.test(w))continue;const n=field(w,'name_en')||t;const drops=tpl(w,'Drop').filter(d=>d.category!=='nothing');const meso=drops.find(d=>d.category==='meso');
     mobs[n]={lv:+field(w,'level')||0,hp:num(field(w,'hp')),exp:num(field(w,'exp')),boss:field(w,'boss')==='yes',meso:meso?[+meso.min_quantity||0,+meso.max_quantity||0,+meso.drop_rate||0]:null,
       drops:drops.filter(d=>d.category!=='meso'&&d.item_id).map(d=>[d.item_id,d.category,d.drop_rate?+(+d.drop_rate).toFixed(3):null])}}
@@ -842,15 +1038,29 @@ async function buildDB(){
   $('dbInfo').textContent='Downloading pictures…';
   const mu=await urls(Object.keys(mobs).flatMap(n=>['webp','png','gif'].map(e=>n+'.'+e)));for(const n in mobs)mobs[n].img=mu[n+'.webp']||mu[n+'.png']||mu[n+'.gif']||'';
   const pu=await urls(Object.keys(maps).map(n=>n+'-minimap.png'));for(const n in maps)maps[n].mini=pu[n+'-minimap.png']||'';
-  DB={at:Date.now(),mobs,maps};try{localStorage.setItem('mgm.db',JSON.stringify(DB))}catch{}
+  DB={v:2,at:Date.now(),mobs,maps,items};try{localStorage.setItem('mgm.db',JSON.stringify(DB))}catch{}
   showDB();showMobs();renderKills();showMapPic();
 }
-function showDB(){$('dbInfo').textContent=DB?`Classic database: ${Object.keys(DB.maps).length} maps, ${Object.keys(DB.mobs).length} monsters, saved ${new Date(DB.at).toLocaleDateString()}. Source: MapleClassic Wiki.`:'Classic database not downloaded yet.'}
-async function ensureDB(){if(!DB||Date.now()-DB.at>7*864e5){try{await buildDB()}catch(e){$('dbInfo').textContent='Could not download the Classic database ('+e.message+'). It will try again next time.'}}else showDB()}
+function showDB(){$('dbInfo').textContent=DB?`Classic database: ${Object.keys(DB.maps).length} maps, ${Object.keys(DB.mobs).length} monsters, ${(DB.items||[]).length} items, saved ${new Date(DB.at).toLocaleDateString()}. Source: MapleClassic Wiki.`:'Classic database not downloaded yet.'}
+async function ensureDB(){if(!DB||!(DB.v>=2)||Date.now()-DB.at>7*864e5){try{await buildDB()}catch(e){$('dbInfo').textContent='Could not download the Classic database ('+e.message+'). It will try again next time.'}}else showDB()}
 const mobImg=name=>{const m=DB&&DB.mobs[name];return m&&m.img?`<img class="mobimg" loading="lazy" src="${WIMG}${m.img}" alt="">`:''};
 function bestDrops(name){const m=DB&&DB.mobs[name];if(!m)return [];
   const score=d=>(d[1]==='equip'?3:/scroll/i.test(d[0])?3:d[1]==='use'&&!/potion|arrow/i.test(d[0])?1:0)+(d[2]!=null&&d[2]<1?2:0);
   return [...m.drops].filter(d=>d[1]!=='quest').sort((a,b)=>score(b)-score(a)||(a[2]??99)-(b[2]??99)).slice(0,3)}
+const itemPics=store.get('itemPics',{});let picQ=new Set(),picT=0;
+function itemImg(name){
+  if(!DB||!name)return '';const u=itemPics[name];
+  if(u===undefined){picQ.add(name);clearTimeout(picT);picT=setTimeout(fetchPics,400);return '<span class="mobimg"></span>'}
+  return u?`<img class="mobimg" loading="lazy" src="${esc(u)}" alt="">`:'<span class="mobimg"></span>';
+}
+async function fetchPics(){
+  const names=[...picQ].slice(0,50);picQ=new Set([...picQ].slice(50));if(!names.length)return;
+  try{const j=await wapi('action=query&prop=pageimages&piprop=original&redirects=1&titles='+encodeURIComponent(names.join('|')));
+    const from={};for(const x of (j.query.normalized||[]))from[x.to]=x.from;for(const x of (j.query.redirects||[]))from[x.to]=from[x.from]||x.from;
+    for(const pg of Object.values(j.query.pages||{})){const n=from[pg.title]||pg.title;itemPics[n]=pg.original?pg.original.source:''}
+  }catch(e){}
+  for(const n of names)if(itemPics[n]===undefined)itemPics[n]='';store.set('itemPics',itemPics);renderKills();if(picQ.size)picT=setTimeout(fetchPics,400);
+}
 const expMeso=name=>{const m=DB&&DB.mobs[name];return m&&m.meso?(m.meso[0]+m.meso[1])/2*m.meso[2]/100:null};
 function loadAutoMobs(){showMapPic();showMobs();renderKills()}
 function renderKills(){
@@ -860,7 +1070,7 @@ function renderKills(){
   for(const m of mobsFor(curMap()))if(!list.some(x=>x.name===m.name))list.push({name:m.name,lv:m.lv,each:m.exp,n:0,exp:0,expPct:0,meso:0});
   $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">Kills/hr</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}${x.lv?` <small>Lv ${x.lv} · ${fmt(x.each)} EXP</small>`:''}${(()=>{const d=bestDrops(x.name);return d.length?`<br><small class="itm">Best drops: ${d.map(z=>esc(z[0])+(z[2]!=null?` (${z[2]<1?z[2].toFixed(2):z[2].toFixed(1)}%)`:'')).join(', ')}</small>`:''})()}</td><td class="n kc">${fmt(x.n)}</td><td class="n">${hr>.003?fmt(x.n/hr):'–'}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Set the map and its monsters appear here with a kill counter.</small></td></tr>';
   const ic=S?itemCounts(S):[];
-  $('itemsT').innerHTML=ic.length?'<tr><th>Item</th><th class="n">Count</th><th class="n">Per hour</th></tr>'+ic.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n kc itm">${fmt(c)}</td><td class="n">${hr>.003?fmt(c/hr):'–'}</td></tr>`).join(''):'<tr><td><small>Items you loot are listed here with a count.</small></td></tr>';
+  $('itemsT').innerHTML=ic.length?'<tr><th>Item</th><th class="n">Count</th><th class="n">Per hour</th></tr>'+ic.map(([n,c])=>`<tr><td>${itemImg(n)}${esc(n)}</td><td class="n kc itm">${fmt(c)}</td><td class="n">${hr>.003?fmt(c/hr):'–'}</td></tr>`).join(''):'<tr><td><small>Items you loot are listed here with a count.</small></td></tr>';
   $('party').innerHTML=party?[
     party.splitN?`<span class="pill">Your share ≈ ${Math.round(party.share*100)}% of each mob's EXP → about ${party.splitN} people splitting (if similar level and damage)</span>`:'<span class="pill">Paste this map\'s monsters below to estimate the split</span>',
     party.bonusPct!=null?`<span class="pill">Party bonus ≈ ${Math.round(party.bonusPct*100)}% → ${party.eligible||'?'} eligible members · ${fmt(party.fromParty)} EXP from the bonus</span>`:'<span class="pill">No party bonus read yet</span>',
@@ -882,7 +1092,8 @@ function barParts(text,lastPct){
   if(sl){need=num(sl[2]);ds=sl[1].replace(/\D/g,'');rest=t.slice(sl[0].length)}
   else{const m=/^\d{1,3}(?:[.,]\d{3})*/.exec(t);if(!m)return null;ds=m[0].replace(/\D/g,'');rest=t.slice(m[0].length)}
   if(!ds)return null;
-  let pct=null;const pd=rest.split('%')[0].replace(/\D/g,'');
+  // the percent has two decimals: anchor on the decimal point, so a "%" misread as a digit ("[24.009") is not taken as one
+  let pct=null;const pm=/(\d{1,3})[.,](\d{2})/.exec(rest.split('%')[0]),pd=pm?pm[1]+pm[2]:rest.split('%')[0].replace(/\D/g,'');
   if(pd.length>=3){const a=+(pd.slice(0,-2)+'.'+pd.slice(-2)),b=pd.length>=4?+(pd.slice(1,-2)+'.'+pd.slice(-2)):null;
     if(b!=null&&lastPct!=null)pct=Math.abs(b-lastPct)<Math.abs(a-lastPct)?b:a;
     else pct=b!=null&&!/^[\[(]/.test(rest)&&pd[0]==='1'?b:a;
@@ -922,7 +1133,12 @@ function onBarText(text){MGM.lastBar=text;
   const b=S.bar||(S.bar={gained:0,msg:0,last:null,lastPct:null,need:null,levels:0});
   const r=barParts(text,b.lastPct);if(!r){if(MGM.barLog)MGM.barLog.push([Date.now()-MGM.t0,text.trim(),'unreadable']);return}
   const raw=b.raw&&b.raw.ds===r.ds?(b.raw.n++,b.raw):(b.raw={ds:r.ds,n:1,pct:r.pct});
-  const rebase=()=>{b.last=r.cur;b.lastAt=Date.now();if(r.pct!=null)b.lastPct=r.pct;if(r.need)b.need=r.need;else if(r.pct>=1)b.need=Math.round(r.cur*100/r.pct);b.pend=null;b.miss=0;b.hist=[]};
+  const rebase=()=>{b.last=r.cur;b.lastAt=Date.now();if(r.pct!=null)b.lastPct=r.pct;if(r.need)b.need=r.need;else if(r.pct>=1)b.need=Math.round(r.cur*100/r.pct);b.pend=null;b.miss=0;b.hist=[];b.pctN=r.pct!=null?1:0;b.pctAlt=null};
+  // the percent is only used as a check once it has been read the same way a few times; a misread start percent
+  // ("[24.00%]" read as 40.09) is replaced when three reads agree on another value
+  if(r.pct!=null&&b.lastPct!=null){if(Math.abs(r.pct-b.lastPct)<0.5)b.pctN=Math.min(9,(b.pctN||0)+1);
+    else{b.pctAlt=b.pctAlt&&Math.abs(r.pct-b.pctAlt.v)<0.3?{v:r.pct,n:b.pctAlt.n+1}:{v:r.pct,n:1};
+      if(b.pctAlt.n>=3&&(b.pctN||0)<3&&r.pct>=1){b.lastPct=r.pct;b.need=r.need||Math.round(r.cur*100/r.pct);b.pctN=2;b.pctAlt=null}}}
   b.hist=(b.hist||[]).concat(r.ds).slice(-5);
   if(b.last==null){                                                  // start: vote digit by digit over the last reads
     const L=b.hist.map(x=>x.length).sort((a,c)=>b.hist.filter(x=>x.length===c).length-b.hist.filter(x=>x.length===a).length)[0];
@@ -936,8 +1152,11 @@ function onBarText(text){MGM.lastBar=text;
     if(b.last==null||b.last===r.cur){renderBar();return}}
   // how far the bar can rise since the last trusted value: a few kills of this map's strongest monster per second
   const mx=Math.max(0,...mobsFor(curMap()).map(m=>m.exp||0)),secs=Math.min(30,(Date.now()-(b.lastAt||Date.now()))/1000);
-  const unit=mx||(b.need?Math.max(30,b.need*0.0007):300),cap=Math.round(unit*4+unit*0.6*secs);
-  const s=snapBar(r.ds,b.last,cap);
+  const me=S.events.filter(e=>e.type==='exp').slice(-15).map(e=>e.value).sort((a,c)=>a-c),medExp=me.length?me[me.length>>1]:0;
+  const unit=mx||medExp||(b.need?Math.max(30,b.need*0.0005):300),cap=Math.round(unit*4+unit*0.6*secs);
+  // the percent must agree with the rise: "99,145" read for 89,145 would be +10,000 EXP but the percent barely moved
+  const pctOk=v=>{if(!b.need||r.pct==null||b.lastPct==null||(b.pctN||0)<2)return true;const exp=(v-b.last)/b.need*100;return Math.abs((r.pct-b.lastPct)-exp)<=0.03+exp*0.1};
+  let s=snapBar(r.ds,b.last,cap);if(s&&s.v>b.last&&!pctOk(s.v))s=null;
   if(s){b.miss=0;
     const p=b.pend;
     if(s.v===b.last)b.pend=null;                                   // unchanged (an earlier odd read was wrong)
@@ -967,7 +1186,7 @@ $('useBar').checked=store.get('useBar',true);$('useBar').onchange=()=>{store.set
 /* ---------- save settings for this PC ----------
    Everything is kept in this browser on this PC. The button takes a named snapshot that is loaded
    every time the page opens here; the settings code moves it to another PC or browser. */
-const SKEYS=['regions2','profiles2','thr2','scanMs','newestTop','useBar','pExp','pMeso','pItem','solo'],XKEYS=['minimaps','mobImgIds'];
+const SKEYS=['regions2','profiles2','thr3','scanMs','newestTop','useBar','pExp','pMeso','pItem','solo'],XKEYS=['minimaps','mobImgIds'];
 function snapshot(all){const o={};for(const k of all?SKEYS.concat(XKEYS):SKEYS){const v=store.get(k,undefined);if(v!==undefined)o[k]=v}return o}
 function applySnap(o){for(const k of SKEYS.concat(XKEYS))if(k in o)store.set(k,o[k])}
 function showSaved(){const sv=store.get('pcSaved',null);$('savedInfo').textContent=sv?'Saved for this PC on '+new Date(sv.at).toLocaleString()+'. Loads automatically here.':'Not saved yet: boxes are kept, but press Save to lock them in for this PC.'}
