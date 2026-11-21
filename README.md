@@ -2,7 +2,7 @@
 
 A browser overlay for MapleStory Classic that measures EXP and mesos per hour while you train, so you can compare maps. Nothing to install: open the page in Chrome or Edge, share the game window, and press Start.
 
-**Live:** https://jguan223.github.io/maple-grind-meter/
+**Live:** https://jguan223.github.io/Maple-grind-meter/
 
 ## What it does
 - Reads the EXP / meso / item pickup messages in the bottom-right of the game with in-browser OCR (Tesseract.js). Your screen never leaves your computer.
