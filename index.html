@@ -91,6 +91,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
           <select id="scanMs"><option value="150">Fast (≈6/s)</option><option value="250" selected>Normal (≈4/s)</option><option value="400">Light (≈2.5/s)</option><option value="700">Lightest (≈1.5/s)</option></select>
         </label>
         <label>Message text brightness cut (0 = auto) <input id="thr" type="number" min="0" max="250" value="140" style="width:70px"></label>
+        <button id="bFind" title="Looks for the EXP bar and the minimap title in your game, whatever its size">Find boxes</button>
         <button id="bReset">Reset boxes</button>
         <label><input type="checkbox" id="newestTop"> Newest message is on top</label>
       </div>
@@ -146,6 +147,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Monsters on this map · kill counter</h2>
         <label style="font-size:14px;color:var(--ink)"><input type="checkbox" id="solo" checked> Not in a party (solo)</label></div>
       <div id="party" class="row" style="margin:6px 0"></div><small id="mobSrc"></small>
+      <small id="killSrc" style="color:var(--mute)"></small>
       <div class="scroll"><table id="kills"></table></div>
       <details style="margin-top:8px"><summary>Fix the monster list (paste from meowdb)</summary>
         <small>On the map's meowdb page, select the <b>Monster · Lv · HP · EXP</b> table, copy it and paste it here. It is saved for this map and replaces the automatic list, which comes from the original game's data and can differ from Classic. Without either, kills are grouped by EXP amount.</small>
@@ -234,6 +236,8 @@ function parseLine(raw){
       else if((m=/^(.{3,40}?)\s+(?:has been |have been |was )?(?:obtained|acquired|gained)/i.exec(line)))name=m[1];
       else if((m=/(?:gained|obtained|acquired|picked up)\s+(?:an?\s+)?(?:item\s*[:\-]?\s*)?(.{3,40})$/i.exec(line)))name=m[1];
       name=(name||'').replace(/^(you\s+have|you)\s+/i,'').replace(/\b(x\s?\d+|item\.?|an item\.?)\s*$/i,'').replace(/[^\w' :-]/g,'').trim();
+      name=name.replace(/^.*?\b(?:an?\W{0,2})?[il1j|]?tem\b\W*/i,'').trim()||name;
+      name=canonItem(name);
       if(name.length<3||/^(an?|item|items)$/i.test(name))name='Unnamed item';
       return{type:'item',value:1,qty:q,name,key:'i'+name.toLowerCase()+q};
     }
@@ -280,7 +284,7 @@ function dragify(id,k){
         if(h.includes('n'))y1=Math.min(y2-MH,Math.max(0,o.y+dy));if(h.includes('s'))y2=Math.max(y1+MH,Math.min(1,o.y+o.h+dy));
         Object.assign(r,{x:x1,y:y1,w:x2-x1,h:y2-y1})}
       placeBoxes()};
-    el.onpointerup=()=>{el.onpointermove=null;saveRegions();lastSig=null}};
+    el.onpointerup=()=>{el.onpointermove=null;manualBox[k]=true;saveRegions();lastSig=null}};
 }
 dragify('rGain','gain');dragify('rMap','map');dragify('rBar','bar');
 new ResizeObserver(placeBoxes).observe(stage);
@@ -306,12 +310,13 @@ $('bShare').onclick=async()=>{
   }
   setStatus(state==='run'?'Running':'Ready · press Start');
   startLoop();
+  setTimeout(async()=>{const f=await autoFind(false);if(f&&f.length)setStatus((state==='run'?'Running':'Ready · press Start')+' · found the '+f.join(' and '))},1500);
 };
 function setStatus(t){$('status').textContent=t}
 
 const work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true});
 const tiny=document.createElement('canvas');tiny.width=48;tiny.height=24;const tctx=tiny.getContext('2d',{willReadFrequently:true});
-let lastSig=null,lastOcrAt=0,lastMapAt=0,lastBarAt=0;let OCR_SCALE=+(new URLSearchParams(location.search).get('scale')||5);
+let lastSig=null,lastOcrAt=0,lastMapAt=0,lastBarAt=0;const BAR_MS=+(new URLSearchParams(location.search).get('barms')||1000);let OCR_SCALE=+(new URLSearchParams(location.search).get('scale')||5);
 async function grabFrame(){
   const v=$('vid');
   if(grabber&&track&&track.readyState==='live'){try{return await grabber.grabFrame()}catch(e){}}
@@ -372,7 +377,7 @@ async function scanMsgs(){
 }
 async function scanSide(){
   const w=ocr2||ocr;if(side2Busy||!w||!stream)return;
-  const now=performance.now(),wantMap=now-lastMapAt>4000,wantBar=state==='run'&&$('useBar').checked&&now-lastBarAt>3000;
+  const now=performance.now(),wantMap=now-lastMapAt>4000,wantBar=state==='run'&&$('useBar').checked&&now-lastBarAt>BAR_MS;
   if(!wantMap&&!wantBar)return;
   if(!ocr2&&ocrBusy)return;
   side2Busy=true;
@@ -386,6 +391,106 @@ async function scanSide(){
     if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'-:. "});const {data}=await w.recognize(cm);if(!(await onMapTitle(data.text)))onMinimap(sig);else lastMini=sig}
   }catch(e){console.warn(e)}finally{side2Busy=false}
 }
+/* ---------- find the boxes automatically ----------
+   Every player's window is a different size and place, so the overlay looks for the text itself:
+   the word "EXP" on the status bar, and the white two-line title of the minimap. Boxes you drag
+   yourself are left alone (until you press "Find boxes"). */
+const manualBox={};
+function plainCrop(src,r,scale,white){
+  const W=src.videoWidth||src.width,H=src.videoHeight||src.height,c=document.createElement('canvas');
+  c.width=Math.round(r.w*W*scale);c.height=Math.round(r.h*H*scale);const x=c.getContext('2d',{willReadFrequently:true});
+  x.drawImage(src,r.x*W,r.y*H,r.w*W,r.h*H,0,0,c.width,c.height);
+  if(white){const im=x.getImageData(0,0,c.width,c.height),d=im.data;for(let i=0;i<d.length;i+=4){const v=Math.min(d[i],d[i+1],d[i+2])>185?0:255;d[i]=d[i+1]=d[i+2]=v}x.putImageData(im,0,0)}
+  return c;
+}
+async function ocrWords(w,c,r,scale,W,H){
+  await w.setParameters({tessedit_pageseg_mode:'11',tessedit_char_whitelist:''});
+  const {data}=await w.recognize(c,{},{tsv:true,text:false,blocks:false,hocr:false});
+  return (data.tsv||'').split('\n').map(l=>l.split('\t')).filter(a=>a.length>=12&&a[11]&&a[11].trim()).map(a=>({b:a[2]+'.'+a[3]+'.'+a[4],t:a[11].trim(),
+    x0:r.x*W+ +a[6]/scale,y0:r.y*H+ +a[7]/scale,x1:r.x*W+(+a[6]+ +a[8])/scale,y1:r.y*H+(+a[7]+ +a[9])/scale}));
+}
+function linesOf(words){const m=new Map();for(const w of words){const l=m.get(w.b)||{ws:[]};l.ws.push(w);m.set(w.b,l)}
+  return [...m.values()].map(l=>({ws:l.ws,t:l.ws.map(w=>w.t).join(' '),x0:Math.min(...l.ws.map(w=>w.x0)),x1:Math.max(...l.ws.map(w=>w.x1)),y0:Math.min(...l.ws.map(w=>w.y0)),y1:Math.max(...l.ws.map(w=>w.y1))}))}
+let finding=false;
+async function autoFind(force){
+  if(finding||!stream)return null;const w=ocr2||ocr;if(!w)return null;
+  finding=true;const own=w===ocr2;
+  for(let i=0;i<40&&(own?side2Busy:ocrBusy);i++)await wait(100);
+  if(own)side2Busy=true;else ocrBusy=true;
+  const found=[];
+  try{
+    const src=await grabFrame();if(!src)return null;
+    const W=src.videoWidth||src.width,H=src.videoHeight||src.height;
+    // EXP bar: "EXP 89,053 [4.80%]" on the status bar
+    if(force||!manualBox.bar){
+      for(const [r,sc] of [[{x:0,y:.5,w:1,h:.5},W>1600?1.5:2],[{x:0,y:.75,w:1,h:.25},W>1600?2:3]]){
+        const ws=await ocrWords(w,plainCrop(src,r,sc,false),r,sc,W,H);
+        const isExp=x=>/^[E£F][XKx][Pp]|^EXP|^EX[^a-z]?$/.test(x.t),isPct=x=>/\d[.,]?\d\d%/.test(x.t);
+        const cands=[];
+        for(const k of ws.filter(x=>isExp(x)||isPct(x))){
+          const h=Math.max(8,k.y1-k.y0),line=ws.filter(x=>x.b===k.b).sort((a,c)=>a.x0-c.x0);
+          // grow left and right along the line while the gaps are small: "EXP" "89,053" "[4.80%]"
+          let i=line.indexOf(k),j=i;while(i>0&&k.x0-line[i-1].x1<h*3&&line[i-1].x1-line[i-1].x0<h*6&&(isExp(line[i-1])||/\d/.test(line[i-1].t))&&!isPct(line[i-1]))i--;
+          while(j<line.length-1&&line[j+1].x0-line[j].x1<h*2&&/\d/.test(line[j+1].t)&&!isExp(line[j+1]))j++;
+          const g=line.slice(i,j+1);if(!g.some(isExp)&&!g.some(isPct))continue;if(!g.some(x=>/\d/.test(x.t)))continue;
+          const sc2=(g.some(isExp)?2:0)+(g.some(isPct)?1:0);
+          cands.push({g,sc2,x0:Math.min(...g.map(x=>x.x0)),x1:Math.max(...g.map(x=>x.x1)),y0:Math.min(...g.map(x=>x.y0)),y1:Math.max(...g.map(x=>x.y1)),h:Math.max(...g.filter(isExp).map(x=>x.y1-x.y0),Math.max(8,k.y1-k.y0))})}
+        if(MGM.barLog)MGM.barLog.push(['findwords',W,H,ws.length,cands.map(c=>c.g.map(x=>x.t).join(' ')+'@'+Math.round(c.x0)+','+Math.round(c.y0)).join(' | ')]);
+        cands.sort((a,c)=>c.sc2-a.sc2||c.y0-a.y0);const c=cands[0];if(!c)continue;
+        let h=c.h,x0=c.x0;
+        if(c.sc2<2){ // no "EXP" word seen yet: look again closely, just left of the numbers
+          const rr={x:Math.max(0,(c.x1-h*18)/W),y:Math.max(0,(c.y0-h)/H),w:0,h:Math.min(1,(c.y1-c.y0+h*2)/H)};rr.w=Math.min(1-rr.x,(c.x1+h*2)/W-rr.x);
+          const near=(await ocrWords(w,plainCrop(src,rr,4,false),rr,4,W,H)).filter(x=>isExp(x)&&x.x1<=c.x0+h&&Math.abs(x.y0-c.y0)<h*1.5).sort((a,b)=>b.x0-a.x0)[0];
+          if(near){x0=near.x0;h=Math.max(h,near.y1-near.y0)}else x0=c.x1-h*10}
+        const p=Math.max(3,h*.25);
+        R.bar={x:Math.max(0,(x0-p)/W),y:Math.max(0,(c.y0-p)/H),w:Math.min(1,(Math.max(c.x1-x0+h*2,h*8.5)+p*2)/W),h:Math.min(.2,(c.y1-c.y0+p*2)/H)};
+        if(!manualBox.gain||force){const g=R.gain,gb=R.bar.y-.01;R.gain={x:g.x,w:g.w,h:Math.min(g.h,gb),y:Math.max(0,gb-Math.min(g.h,gb))}}
+        found.push('EXP bar');break}
+    }
+    // minimap title: white text, two lines ("Victoria Road" / "The Hill East of Henesys")
+    if(force||!manualBox.map){
+      const r={x:0,y:0,w:.5,h:.35},sc=W>1600?2.5:3;
+      const ls=linesOf(await ocrWords(w,plainCrop(src,r,sc,true),r,sc,W,H)).filter(l=>/[A-Za-z]{3}/.test(l.t)).sort((a,b)=>a.y0-b.y0);
+      let best=null;
+      for(const l of ls){const name=l.t.replace(/[^A-Za-z' :\-.]/g,' ').replace(/\s+/g,' ').trim();
+        const hit=DB?await canonMap('',name):null;if(!hit)continue;
+        const lh=l.y1-l.y0,above=ls.find(u=>u!==l&&u.y1<=l.y0+2&&l.y0-u.y1<lh*1.6&&Math.abs(u.x0-l.x0)<lh*3);
+        best={l,above};break}
+      if(!best&&!DB){const i=ls.findIndex(l=>/\b(road|island|ossyria|victoria|maple)\b/i.test(l.t));if(i>=0&&ls[i+1])best={l:ls[i+1],above:ls[i]}}
+      if(best){const a=best.above||best.l,l=best.l,p=Math.max(3,(l.y1-l.y0)*.4);
+        const x0=Math.min(a.x0,l.x0)-p,x1=Math.max(a.x1,l.x1)+p*2,y0=a.y0-p,y1=l.y1+p;
+        R.map={x:Math.max(0,x0/W),y:Math.max(0,y0/H),w:Math.min(1,(x1-x0)/W),h:Math.min(.3,(y1-y0)/H)};found.push('map name')}
+    }
+    if(src.close)src.close();
+    if(found.length){saveRegions();placeBoxes();lastSig=null;lastMapAt=0;lastBarAt=0}
+    return found;
+  }catch(e){console.warn(e);return null}
+  finally{if(own)side2Busy=false;else ocrBusy=false;finding=false}
+}
+// pickup messages ("You have gained mesos (+12)") show at the bottom right of the game, above the status bar.
+// They are only on screen for a moment, so this looks for them while you play and puts the box where they are.
+async function findMsgBox(force){
+  if(finding||!stream||(manualBox.gain&&!force))return false;const w=ocr2||ocr;if(!w)return false;
+  finding=true;const own=w===ocr2;for(let i=0;i<40&&(own?side2Busy:ocrBusy);i++)await wait(100);
+  if(own)side2Busy=true;else ocrBusy=true;
+  try{
+    const src=await grabFrame();if(!src)return false;const W=src.videoWidth||src.width,H=src.videoHeight||src.height;
+    const bot=Math.max(.3,Math.min(1,R.bar?R.bar.y+.01:1)),r={x:.35,y:Math.max(0,bot-.5),w:.65,h:Math.min(.5,bot)},sc=W>1600?1.5:2;
+    const ws=await ocrWords(w,plainCrop(src,r,sc,false),r,sc,W,H);if(src.close)src.close();
+    let k=ws.filter(x=>/gain|meso|experi|obtain|\(\+/i.test(x.t));
+    if(k.length){const hh=Math.max(...k.map(x=>x.y1-x.y0)),mx1=Math.max(...k.map(x=>x.x1));k=k.filter(x=>mx1-x.x1<hh*25)}   // right-aligned messages, not the chat box
+    if(MGM.barLog)MGM.barLog.push(['findmsg',k.map(x=>x.t+'@'+Math.round(x.x0)+','+Math.round(x.y0)).join(' ')]);
+    if(k.length<2)return false;
+    const h=Math.max(...k.map(x=>x.y1-x.y0)),lines=ws.filter(x=>k.some(q=>q.b===x.b&&Math.abs(q.y0-x.y0)<h&&x.x1>q.x0-h*30));
+    const x0=Math.min(...lines.map(x=>x.x0)),x1=Math.max(...lines.map(x=>x.x1)),y1=Math.max(...lines.map(x=>x.y1));
+    const right=Math.min(W,x1+h*2),left=Math.max(0,Math.min(x0-h*4,right-h*30)),top=Math.max(0,y1-h*14);
+    R.gain={x:left/W,y:top/H,w:(right-left)/W,h:Math.min(1,(y1+h*1.5)/H)-top/H};
+    saveRegions();placeBoxes();lastSig=null;return true;
+  }catch(e){console.warn(e);return false}
+  finally{if(own)side2Busy=false;else ocrBusy=false;finding=false}
+}
+$('bFind').onclick=async()=>{$('bFind').disabled=true;setStatus('Looking for the EXP bar and the map name…');const f=await autoFind(true)||[];if(await findMsgBox(true))f.push('pickup messages');$('bFind').disabled=false;
+  setStatus(f&&f.length?'Found the '+f.join(' and ')+' · boxes moved':'Could not find them: drag the boxes by hand (or open the minimap and try again)')};
 function showCalib(c,text){
   if(!$('ocrView').closest('details').open)return;
   const v=$('ocrView');v.width=c.width;v.height=c.height;v.getContext('2d').drawImage(c,0,0);$('ocrText').textContent=text||'(no text)';
@@ -471,6 +576,10 @@ function onTick(){
     if(left<=0&&state==='run'){endSession(true)}}
   else $('remain').textContent='No time limit';
   if(!onTick.k||Date.now()-onTick.k>2000){onTick.k=Date.now();renderKills();renderBar()}
+  // EXP bar not readable for a while (window moved or resized): look for it again, at most once a minute
+  if($('useBar').checked&&S&&(!S.bar||S.bar.last==null)&&Date.now()-runStart>20000&&Date.now()-(onTick.f||0)>60000){onTick.f=Date.now();autoFind(false)}
+  // EXP is rising but no pickup message has been read for a while: look for where the messages are
+  else if(!manualBox.gain&&S&&S.bar&&S.bar.gained>(onTick.g||0)&&Date.now()-(onTick.m||runStart)>15000&&(!S.events.length||elapsed()-S.events[S.events.length-1].t>45000)){onTick.m=Date.now();onTick.g=S.bar.gained;findMsgBox(false)}
   renderPip();
 }
 // EXP total: when the EXP bar is being read, its rise is exact; message EXP fills in any time the bar wasn't tracked
@@ -517,7 +626,7 @@ function showSummary(s){
    <h2 style="margin-top:14px">Every 30 minutes</h2>
    <div class="scroll"><table><tr><th>Time</th><th class="n">EXP</th><th class="n">Mesos</th><th class="n">Items</th></tr>${rows}</table></div>
    <h2 style="margin-top:14px">Kills by monster</h2>
-   ${(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false);return (a.list.length?`<table>${a.list.map(x=>`<tr><td>${esc(x.name)}</td><td class="n">${fmt(x.n)} kills</td><td class="n exp">${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%)</td><td class="n meso">~${fmt(x.meso)} mesos</td></tr>`).join('')}</table>`:'<small>No kills read.</small>')+(a.party?`<p><small>Party: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?` (≈${a.party.splitN} people splitting)`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from party bonus`:''}.</small></p>`:'')})()}
+   ${(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false,s.bar);return (a.list.length?`<table>${a.list.map(x=>`<tr><td>${esc(x.name)}</td><td class="n">${fmt(x.n)} kills</td><td class="n exp">${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%)</td><td class="n meso">~${fmt(x.meso)} mesos</td></tr>`).join('')}</table>`:'<small>No kills read.</small>')+(a.party?`<p><small>Party: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?` (≈${a.party.splitN} people splitting)`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from party bonus`:''}.</small></p>`:'')})()}
    <h2 style="margin-top:14px">Drops picked up</h2>
    ${d.items.length?`<table>${d.items.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n">×${c}</td></tr>`).join('')}</table>`:'<small>No item pickups were read.</small>'}
    <p><a href="${mapUrl(d.map)}" target="_blank" rel="noopener">See ${esc(d.map)} drops and prices on meowdb ↗</a></p>`;
@@ -529,7 +638,7 @@ function summaryText(s){
   `| | Total | Per hour | Per 30 min |\n|---|---:|---:|---:|\n| EXP | ${fmt(d.t.exp)} | ${fmt(d.perHr.exp)} | ${fmt(d.per30.exp)} |\n| Mesos | ${fmt(d.t.meso)} | ${fmt(d.perHr.meso)} | ${fmt(d.per30.meso)} |\n| Items | ${d.t.items} | ${fmt(d.t.items/d.hr)} | ${fmt(d.t.items/d.hr/2)} |\n\n`+
   (s.bar&&s.bar.gained?`EXP bar cross-check: bar +${fmt(s.bar.gained)} vs messages +${fmt(s.bar.msg||0)} (${Math.round(Math.min(s.bar.msg||0,s.bar.gained)/Math.max(s.bar.msg||1,s.bar.gained)*100)}% match)\n\n`:'')+
   `## Every 30 minutes\n\n| Time | EXP | Mesos | Items |\n|---|---:|---:|---:|\n`+d.b30.map(b=>`| ${hms(b.from)}–${hms(b.to)} | ${fmt(b.exp)} | ${fmt(b.meso)} | ${b.items} |`).join('\n')+
-  `\n\n## Kills by monster\n\n`+(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false);return a.list.map(x=>`- ${x.name}: ${fmt(x.n)} kills, ${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%), ~${fmt(x.meso)} mesos`).join('\n')+(a.party?`\n\nParty: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?`, ≈${a.party.splitN} people splitting`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from bonus`:''}`:'')})()+
+  `\n\n## Kills by monster\n\n`+(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false,s.bar);return a.list.map(x=>`- ${x.name}: ${fmt(x.n)} kills, ${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%), ~${fmt(x.meso)} mesos`).join('\n')+(a.party?`\n\nParty: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?`, ≈${a.party.splitN} people splitting`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from bonus`:''}`:'')})()+
   `\n\n## Drops picked up\n\n`+(d.items.length?d.items.map(([n,c])=>`- ${n} ×${c}`).join('\n'):'- none read')+`\n`;
   return t;
 }
@@ -574,7 +683,10 @@ $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl
 /* Read the minimap title: line 1 is the area ("Victoria Road"), line 2 the map ("Henesys Market").
    The OCR text is matched to the closest real map name so small misreads still find the right map. */
 const lev=(a,b)=>{a=a.toLowerCase();b=b.toLowerCase();const d=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]};
-const nameCache=new Map();let titleVotes=[];
+const nameCache=new Map();
+// a misread item name ("SnanlSnell") is matched to the closest drop of this map's monsters ("Snail Shell")
+function canonItem(n){if(!DB||n.length<3)return n;const names=new Set();for(const m of mobsFor(curMap()))for(const d of ((DB.mobs[m.name]||{}).drops||[]))names.add(d[0]);
+  let best=n,bs=.34;for(const x of names){const sc=lev(x.replace(/\s/g,''),n.replace(/\s/g,''))/Math.max(x.length,n.length);if(sc<bs){bs=sc;best=x}}return best}let titleVotes=[];
 async function canonMap(street,map){
   if(!DB)return null;const key=street+'|'+map;if(nameCache.has(key))return nameCache.get(key);
   let best=null,bs=1;for(const n of Object.keys(DB.maps)){const sc=lev(n,map)/Math.max(n.length,map.length);if(sc<bs){bs=sc;best={name:n}}}
@@ -663,7 +775,7 @@ $('mobPaste').oninput=()=>{const mobs=parseMobTable($('mobPaste').value);store.s
 function showMobs(){const mobs=mobsFor(curMap());const auto=!store.get(mobKey(curMap()),[]).length&&mobs.length;$('mobSrc').textContent=auto?'Monsters and spawns from the Classic database.':mobs.length?'Monster list from your paste.':'';$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
 $('solo').checked=store.get('solo',true);$('solo').onchange=()=>{store.set('solo',$('solo').checked);if(S)S.solo=$('solo').checked;renderKills()};
 const BONUS=[];for(let E=1;E<=6;E++)for(let H=1;H<=E;H++)BONUS.push({E,H,b:Math.min(.3,.1*(E-1))+.05*(H-1)});
-function analyze(ev,mobs,solo){
+function analyze(ev,mobs,solo,bar){
   const exps=ev.filter(e=>e.type==='exp'),base=e=>e.base??e.value;
   const groups=new Map();for(const e of exps){const v=base(e);const g=groups.get(v)||{v,n:0,total:0};g.n++;g.total+=e.value;groups.set(v,g)}
   const G=[...groups.values()];
@@ -679,7 +791,14 @@ function analyze(ev,mobs,solo){
     else if(mobs.length){unknown.n+=g.n;unknown.exp+=g.total}
     else rows.set('v'+g.v,{name:fmt(g.v)+' EXP each',lv:0,each:g.v,n:g.n,exp:g.total});
   }
-  const list=[...rows.values()];if(unknown.n)list.push(unknown);
+  let list=[...rows.values()];if(unknown.n)list.push(unknown);
+  // Solo, the EXP bar is the better source when pickup messages were missed (off-screen or faded):
+  // each rise of the bar was split into this map's monsters by their EXP.
+  const msgKillExp=list.filter(x=>x!==unknown).reduce((a,b)=>a+b.exp,0);
+  let src='messages';
+  if(solo&&bar&&bar.killExp>0&&bar.killExp>msgKillExp*1.05){src='bar';
+    list=Object.entries(bar.kills).map(([name,k])=>{const mb=mobs.find(m=>m.name===name)||{};return{name,lv:mb.lv||0,each:mb.exp||(k.n?k.exp/k.n:0),n:k.n,exp:k.exp}});
+    if(bar.other>0)list.push({name:'Other EXP (quests, level-up, unmatched)',n:0,exp:bar.other,lv:0,each:0})}
   const totExp=list.reduce((a,b)=>a+b.exp,0)||1,totMeso=totals(ev).meso;
   // mesos can't be tied to a monster from the pickup text; split them by kills x level (meso drops grow with level)
   const mw=x=>expMeso(x.name)??(x.lv||1); // expected mesos per kill from the database's drop data
@@ -696,7 +815,7 @@ function analyze(ev,mobs,solo){
     party={share:r,splitN:mobs.length?Math.max(1,Math.round(1/r*10)/10):null,bonusPct:avgB,eligible:Es.length?(Es.length>1?Math.min(...Es)+'–'+Math.max(...Es):String(Es[0])):null,
       fromParty:exps.reduce((a,e)=>a+(e.bonus||0),0)};
   }
-  return{list,party};
+  return{list,party,src};
 }
 
 /* ---------- Classic database (from the MapleClassic Wiki, CC BY-NC-SA 4.0) ----------
@@ -736,7 +855,7 @@ const expMeso=name=>{const m=DB&&DB.mobs[name];return m&&m.meso?(m.meso[0]+m.mes
 function loadAutoMobs(){showMapPic();showMobs();renderKills()}
 function renderKills(){
   const s=S;const ev=s?s.events:[];const solo=$('solo').checked;
-  const {list,party}=analyze(ev,mobsFor(curMap()),solo);
+  const {list,party,src}=analyze(ev,mobsFor(curMap()),solo,s&&s.bar);$('killSrc').textContent=src==='bar'?'Kills counted from the EXP bar (each rise matched to this map\'s monsters).':list.length&&ev.length?'Kills counted from the pickup messages.':'';
   const t=elapsed(),hr=t/3600000;
   for(const m of mobsFor(curMap()))if(!list.some(x=>x.name===m.name))list.push({name:m.name,lv:m.lv,each:m.exp,n:0,exp:0,expPct:0,meso:0});
   $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">Kills/hr</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${mobImg(x.name)}${esc(x.name)}${x.lv?` <small>Lv ${x.lv} · ${fmt(x.each)} EXP</small>`:''}${(()=>{const d=bestDrops(x.name);return d.length?`<br><small class="itm">Best drops: ${d.map(z=>esc(z[0])+(z[2]!=null?` (${z[2]<1?z[2].toFixed(2):z[2].toFixed(1)}%)`:'')).join(', ')}</small>`:''})()}</td><td class="n kc">${fmt(x.n)}</td><td class="n">${hr>.003?fmt(x.n/hr):'–'}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Set the map and its monsters appear here with a kill counter.</small></td></tr>';
@@ -753,39 +872,88 @@ function renderKills(){
    Every 2 s it is read; a new value is only trusted after two matching reads. The rise in the bar
    is the true EXP gained (a drop means a level-up: the rest of the old level is added). */
 let barPend=null;
-function parseBar(text){
-  // e.g. "EXP 88,666 [4.78%]". OCR may give "s8.66614.78%)": s for 8, comma as dot, "[" as 1.
-  let t=text.replace(/\s+/g,'').replace(/^.*?EXP/i,'').replace(/[sS]/g,'8').replace(/[oO]/g,'0').replace(/[lI|]/g,'1');
-  let need=null;const sl=/^([\d,.]+)\/([\d,.]+)/.exec(t);if(sl){need=num(sl[2]);t=t.slice(sl[0].length)}
-  const pm=/(\d{1,2}[.,]\d{2})%/.exec(t)||/(\d{1,2}[.,]\d{2})[%)\]\d]?\D*$/.exec(t);if(!pm&&!sl)return null;
-  let head=sl?sl[1]:t.slice(0,pm?pm.index:t.length);
-  const bracket=/[\[(]$/.test(head);head=head.replace(/[^\d.,]/g,'');
-  const g=head.split(/[.,]/);let ps=pm?pm[1].replace(',','.'):null;
-  if(g.length>1){const last=g[g.length-1];
-    if(last.length===4)g[g.length-1]=last.slice(0,3);                  // "[" glued onto the number
-    else if(last.length===3&&!bracket&&ps&&/^1\d/.test(ps)&&ps.length>4)ps=ps.slice(1); // "[" glued onto the percent
-    if(!g.slice(1).every(x=>x.length===3))return null}
-  const cur=num(g.join(''));if(!g.join(''))return null;
-  const pct=ps?parseFloat(ps):null;if(pct!=null&&pct>=100)return null;
-  return{cur,need,pct};
+// Split the bar text into the EXP digits and the percent. OCR often turns "[" into 1 or 4, drops a
+// leading digit or misreads one ("39,145" for "89,145"), so the digits are later snapped to the
+// last trusted value instead of being taken at face value.
+function barParts(text,lastPct){
+  let t=text.replace(/(\d)[\s.,]+(\d{3}(?!\d?%))/g,'$1,$2').replace(/\s+/g,'').replace(/^.*?EXP/i,'').replace(/[sS]/g,'8').replace(/[oO]/g,'0').replace(/[lI|]/g,'1');
+  let need=null,ds,rest;
+  const sl=/^([\d,.]+)\/([\d,.]+)/.exec(t);
+  if(sl){need=num(sl[2]);ds=sl[1].replace(/\D/g,'');rest=t.slice(sl[0].length)}
+  else{const m=/^\d{1,3}(?:[.,]\d{3})*/.exec(t);if(!m)return null;ds=m[0].replace(/\D/g,'');rest=t.slice(m[0].length)}
+  if(!ds)return null;
+  let pct=null;const pd=rest.split('%')[0].replace(/\D/g,'');
+  if(pd.length>=3){const a=+(pd.slice(0,-2)+'.'+pd.slice(-2)),b=pd.length>=4?+(pd.slice(1,-2)+'.'+pd.slice(-2)):null;
+    if(b!=null&&lastPct!=null)pct=Math.abs(b-lastPct)<Math.abs(a-lastPct)?b:a;
+    else pct=b!=null&&!/^[\[(]/.test(rest)&&pd[0]==='1'?b:a;
+    if(pct>=100)pct=b!=null&&b<100?b:null}
+  return{ds,cur:+ds,need,pct};
+}
+function parseBar(text){const r=barParts(text);return r&&{cur:r.cur,need:r.need,pct:r.pct}}
+function edits1(s){const out=new Set(),D='0123456789';for(let i=0;i<=s.length;i++){for(const c of D)out.add(s.slice(0,i)+c+s.slice(i));if(i<s.length){out.add(s.slice(0,i)+s.slice(i+1));for(const c of D)out.add(s.slice(0,i)+c+s.slice(i+1))}}return out}
+// the value this read most likely shows, between the last trusted value P and P+cap (one wrong digit allowed)
+function snapBar(ds,P,cap){
+  const ok=v=>v>=P&&v<=P+cap;
+  if(ok(+ds))return{v:+ds,d:0};
+  const c=new Set();for(const x of edits1(ds))if(x&&(x[0]!=='0'||x==='0')&&ok(+x))c.add(+x);
+  return c.size===1?{v:[...c][0],d:1}:null;
+}
+// Split one rise of the EXP bar into kills of this map's monsters (solo: each kill gives the monster's full EXP).
+// Fewest kills wins, and monsters that spawn more often are preferred when two splits are equally short.
+function splitKills(d,mobs){
+  const ms=mobs.filter(m=>m.exp>0);if(!ms.length||d<=0)return null;
+  if(d>Math.max(...ms.map(m=>m.exp))*40)return null;
+  const tot=ms.reduce((a,m)=>a+(m.spawns||1),0),cost=ms.map(m=>1+0.3*-Math.log((m.spawns||1)/tot));
+  const best=new Float64Array(d+1).fill(Infinity),from=new Int16Array(d+1).fill(-1);best[0]=0;
+  for(let v=1;v<=d;v++)for(let i=0;i<ms.length;i++){const e=ms[i].exp;if(e<=v&&best[v-e]+cost[i]<best[v]){best[v]=best[v-e]+cost[i];from[v]=i}}
+  if(!isFinite(best[d]))return null;
+  const out={};for(let v=d;v>0;v-=ms[from[v]].exp){const n=ms[from[v]].name;out[n]=(out[n]||0)+1}
+  return out;
+}
+function barAdd(b,d,map){
+  b.gained+=d;
+  const solo=$('solo').checked,k=solo?splitKills(d,mobsFor(map)):null;
+  b.kills=b.kills||{};b.killExp=b.killExp||0;b.other=b.other||0;
+  if(k){b.killExp+=d;for(const [n,c] of Object.entries(k)){const x=b.kills[n]||(b.kills[n]={n:0,exp:0,map});x.n+=c;x.exp+=c*((mobsFor(map).find(m=>m.name===n)||{}).exp||0)}}
+  else b.other+=d;
 }
 function onBarText(text){MGM.lastBar=text;
   if(!S||state!=='run')return;
-  const r=parseBar(text);if(!r||r.pct==null)return;
   const b=S.bar||(S.bar={gained:0,msg:0,last:null,lastPct:null,need:null,levels:0});
-  const confirmed=barPend&&barPend.cur===r.cur;barPend=r;   // the same value read twice in a row
-  const need=r.need||b.need;
-  const agrees=need&&Math.abs(r.cur/need*100-r.pct)<0.08;    // "88,666 [4.78%]" fits this level's EXP total
-  const set=()=>{b.last=r.cur;b.lastPct=r.pct;if(r.need)b.need=r.need;else if(!b.need&&r.pct>=1)b.need=Math.round(r.cur*100/r.pct)};
-  if(b.last==null){if(confirmed)set();renderBar();return}
-  if(r.cur>b.last&&r.pct>=b.lastPct){
-    const d=r.cur-b.last,cap=need?need*0.05:Infinity;      // more than 5% of a level in 3 seconds is a misread
-    if((agrees||confirmed)&&(d<=cap||(confirmed&&d<=cap*4))){b.gained+=d;set()}
-  }else if(r.cur<b.last){
-    if(b.lastPct>=80&&r.pct<=20&&confirmed&&b.need){        // level-up: the bar wrapped round
-      b.gained+=(b.need-b.last)+r.cur;b.levels++;b.need=r.pct>=1?Math.round(r.cur*100/r.pct):null;b.last=r.cur;b.lastPct=r.pct}
-    else if(confirmed&&agrees&&b.lastPct-r.pct<15){b.last=r.cur;b.lastPct=r.pct} // EXP lost on death: not a gain
-  }
+  const r=barParts(text,b.lastPct);if(!r){if(MGM.barLog)MGM.barLog.push([Date.now()-MGM.t0,text.trim(),'unreadable']);return}
+  const raw=b.raw&&b.raw.ds===r.ds?(b.raw.n++,b.raw):(b.raw={ds:r.ds,n:1,pct:r.pct});
+  const rebase=()=>{b.last=r.cur;b.lastAt=Date.now();if(r.pct!=null)b.lastPct=r.pct;if(r.need)b.need=r.need;else if(r.pct>=1)b.need=Math.round(r.cur*100/r.pct);b.pend=null;b.miss=0;b.hist=[]};
+  b.hist=(b.hist||[]).concat(r.ds).slice(-5);
+  if(b.last==null){                                                  // start: vote digit by digit over the last reads
+    const L=b.hist.map(x=>x.length).sort((a,c)=>b.hist.filter(x=>x.length===c).length-b.hist.filter(x=>x.length===a).length)[0];
+    const same=b.hist.filter(x=>x.length===L);let v='';
+    for(let i=0;i<L;i++){const n={};for(const x of same)n[x[i]]=(n[x[i]]||0)+1;v+=Object.entries(n).sort((a,c)=>c[1]-a[1])[0][0]}
+    const h3=b.hist.slice(-3).map(Number),mx0=Math.max(0,...mobsFor(curMap()).map(m=>m.exp||0))*12||300;
+    const climbing=h3.length===3&&h3[0]<=h3[1]&&h3[1]<=h3[2]&&h3[2]-h3[0]<=mx0&&b.hist.slice(-3).every(x=>x.length===L);   // rising steadily while you fight
+    if(b.hist.filter(x=>x===v).length>=2&&r.pct!=null){r.ds=v;r.cur=+v;rebase()}
+    else if(climbing&&r.pct!=null){const keep=r.ds;r.ds=String(h3[0]);r.cur=h3[0];rebase();r.ds=keep;r.cur=+keep}
+    if(MGM.barLog)MGM.barLog.push([Date.now()-MGM.t0,text.trim(),r.ds,'start',b.last]);
+    if(b.last==null||b.last===r.cur){renderBar();return}}
+  // how far the bar can rise since the last trusted value: a few kills of this map's strongest monster per second
+  const mx=Math.max(0,...mobsFor(curMap()).map(m=>m.exp||0)),secs=Math.min(30,(Date.now()-(b.lastAt||Date.now()))/1000);
+  const unit=mx||(b.need?Math.max(30,b.need*0.0007):300),cap=Math.round(unit*4+unit*0.6*secs);
+  const s=snapBar(r.ds,b.last,cap);
+  if(s){b.miss=0;
+    const p=b.pend;
+    if(s.v===b.last)b.pend=null;                                   // unchanged (an earlier odd read was wrong)
+    else if(p&&s.v===p.v){barAdd(b,p.v-b.last,curMap());b.last=p.v;b.lastAt=Date.now();b.pend=null}  // read twice: trusted
+    else if(p&&s.v>p.v&&p.d===0){barAdd(b,p.v-b.last,curMap());b.last=p.v;b.lastAt=Date.now();b.pend=s} // a clean read that the next one rose past
+    else b.pend=s;
+    if(r.pct!=null&&Math.abs(r.pct-b.lastPct)<0.5)b.lastPct=r.pct;
+  }else if(raw.n>=3&&r.pct!=null){b.miss=(b.miss||0)+1;              // the same unexpected reading three times
+    if(b.lastPct>=80&&r.pct<=20&&b.need){b.gained+=(b.need-b.last)+r.cur;b.other=(b.other||0)+(b.need-b.last)+r.cur;b.levels++;b.need=null;rebase()} // level-up
+    else if(r.cur<b.last&&r.pct<b.lastPct-0.2)rebase();             // EXP lost on death: not a gain
+    else if(b.miss>=10&&r.ds.length===String(b.last).length&&Math.abs(r.pct-b.lastPct)<5){   // lost track: start again from here
+      const d=r.cur-b.last,dp=(r.pct-b.lastPct)/100*(b.need||0);
+      if(d>0&&b.need&&Math.abs(d-dp)<b.need*0.0002+unit*2)barAdd(b,d,curMap());   // the percent agrees with the rise: keep it
+      rebase()}
+  }else b.miss=(b.miss||0)+1;
+  if(MGM.barLog)MGM.barLog.push([Date.now()-MGM.t0,text.trim(),r.ds,s&&s.v,b.last,b.pend&&b.pend.v,b.gained]);
   renderBar();
 }
 function renderBar(){
@@ -814,7 +982,7 @@ const live=store.get('live',null);
 if(live&&live.S){S=live.S;state='paused';setStatus('Restored paused session · share screen to resume');setButtons();onTick()}
 $('bDB').onclick=()=>buildDB().catch(e=>$('dbInfo').textContent='Update failed: '+e.message);ensureDB();
 showMobs();renderKills();renderHist();setButtons();
-window.MGM={parseLine,analyze,parseMobTable,ingest,get S(){return S},get state(){return state},record,endSession,summaryText:()=>summaryText(S)};
+window.MGM={cropTo,parseBar,barParts,autoFind,findMsgBox,get R(){return R},snapBar,splitKills,onBarText,parseLine,analyze,parseMobTable,ingest,get S(){return S},get state(){return state},record,endSession,summaryText:()=>summaryText(S)};
 }
 </script>
 </body>
