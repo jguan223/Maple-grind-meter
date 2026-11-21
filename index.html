@@ -40,6 +40,7 @@ main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;
 .region.small i{width:10px;height:10px}.region.small i[data-h=n],.region.small i[data-h=s],.region.small i[data-h=e],.region.small i[data-h=w]{display:none}
 .region.small i[data-h=nw]{left:-11px;top:-11px}.region.small i[data-h=ne]{right:-11px;top:-11px}.region.small i[data-h=sw]{left:-11px;bottom:-11px}.region.small i[data-h=se]{right:-11px;bottom:-11px}
 .mobimg{display:inline-block;width:44px;height:36px;object-fit:contain;vertical-align:middle;margin-right:6px;image-rendering:auto}
+.mobimg.ph{box-sizing:border-box;border:1px dashed currentColor;border-radius:8px;opacity:.55;font:600 13px/34px system-ui,sans-serif;text-align:center;letter-spacing:.5px}
 .kc{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
 #rGain{border-color:var(--exp)}#rGain span,#rGain i{background:var(--exp)}
 #rMap{border-color:var(--item)}#rMap span,#rMap i{background:var(--item)}
@@ -594,13 +595,15 @@ function parseMsg(text){
 // solo: an EXP amount must be one of this map's monsters'; a single misread digit is put right ("283" -> 28)
 function fixAmount(p){
   if(!p)return p;
+  // An amount that fits none of this map's monsters ("+36" read as "1360", 283 for 28) is set right when exactly one
+  // small change makes it fit: one character added, removed or changed, or the "+" / ")" read as digits at the edges.
+  const fit=(v,ok)=>{const s=String(v),c=new Set();for(const x of edits1(s))if(x&&x[0]!=='0'&&ok(+x))c.add(+x);
+    if(!c.size&&s.length>=3)for(const x of [s.slice(1),s.slice(0,-1),s.slice(1,-1)])if(x&&x[0]!=='0'&&ok(+x))c.add(+x);
+    return c.size===1?[...c][0]:null};
   if(p.type==='exp'&&!p.bonus&&$('solo').checked&&mobExpSet.size&&!mobExpSet.has(p.value)){
-    const c=new Set();for(const x of edits1(String(p.value)))if(x&&x[0]!=='0'&&mobExpSet.has(+x))c.add(+x);
-    if(c.size===1){const v=[...c][0];p={...p,value:v,base:v,key:'e'+v+'_0',fixed:true}}
-  }
+    const v=fit(p.value,x=>mobExpSet.has(x));if(v!=null)p={...p,value:v,base:v,key:'e'+v+'_0',fixed:true}}
   if(p.type==='meso'){const rg=mesoRange();
-    if(rg&&(p.value<rg[0]*.5||p.value>rg[1]*3)){const c=new Set();for(const x of edits1(String(p.value)))if(x&&x[0]!=='0'&&+x>=rg[0]&&+x<=rg[1])c.add(+x);
-      if(c.size===1){const v=[...c][0];p={...p,value:v,key:'m'+v,fixed:true}}}}
+    if(rg&&(p.value<rg[0]*.5||p.value>rg[1]*3)){const v=fit(p.value,x=>x>=rg[0]&&x<=rg[1]);if(v!=null)p={...p,value:v,key:'m'+v,fixed:true}}}
   return p;
 }
 function mesoRange(){let lo=Infinity,hi=0;for(const m of mobsFor(curMap())){const x=DB&&DB.mobs[m.name];if(x&&x.meso&&x.meso[1]>0){lo=Math.min(lo,x.meso[0]);hi=Math.max(hi,x.meso[1])}}return hi>0?[lo,hi]:null}
@@ -661,8 +664,8 @@ function makeTracker(){
   };
   function commit(e,force){
     if(!e.reads.length){if(force)e.counted=true;return[]}
-    const by=new Map();
-    for(const r of e.reads){const o=by.get(r.key)||{n:0,w:0,rs:[]};o.n+=r.unk?.34:1;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)?1:0);o.rs.push(r);by.set(r.key,o)}
+    const by=new Map(),mr=e.reads.some(r=>r.type==='meso')?mesoRange():null;
+    for(const r of e.reads){const o=by.get(r.key)||{n:0,w:0,rs:[]};o.n+=r.unk?.34:1;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)||r.type==='meso'&&mr&&r.value>=mr[0]*.5&&r.value<=mr[1]*3?1:0);o.rs.push(r);by.set(r.key,o)}
     const top=[...by.values()].sort((a,b)=>b.n-a.n||b.w-a.w)[0];
     if(!force&&top.n<2)return[];
     e.counted=true;const r=top.rs.sort((a,b)=>b.w-a.w)[0];
@@ -701,7 +704,8 @@ function elapsed(){return S?S.elapsed+(state==='run'?Date.now()-runStart:0):0}
 const recentVals={exp:[],meso:[]};
 function isOutlier(p){ // a misread like "+231" -> "5842" shows up as one wildly larger value
   const r=recentVals[p.type];if(!r)return false;
-  const med=r.length>=5?[...r].sort((a,b)=>a-b)[r.length>>1]:0;
+  let med=r.length>=5?[...r].sort((a,b)=>a-b)[r.length>>1]:0;
+  if(!med){const rg=p.type==='meso'?mesoRange():null;med=rg?rg[1]:p.type==='exp'&&mobExpSet.size?Math.max(...mobExpSet):0}   // early on: what this map's monsters give
   const bad=med>0&&p.value>15*med;
   if(!bad){r.push(p.value);if(r.length>25)r.shift()}
   return bad;
@@ -1056,18 +1060,21 @@ const mobImg=name=>{const m=DB&&DB.mobs[name];return m&&m.img?`<img class="mobim
 function bestDrops(name){const m=DB&&DB.mobs[name];if(!m)return [];
   const score=d=>(d[1]==='equip'?3:/scroll/i.test(d[0])?3:d[1]==='use'&&!/potion|arrow/i.test(d[0])?1:0)+(d[2]!=null&&d[2]<1?2:0);
   return [...m.drops].filter(d=>d[1]!=='quest').sort((a,b)=>score(b)-score(a)||(a[2]??99)-(b[2]??99)).slice(0,3)}
-const itemPics=store.get('itemPics',{});let picQ=new Set(),picT=0;
+const itemPics=store.get('itemPics',{});let picQ=new Set(),picT=0,picRetryAt=0;
 function itemImg(name){
   if(!DB||!name)return '';const u=itemPics[name];
-  if(u===undefined){picQ.add(name);clearTimeout(picT);picT=setTimeout(fetchPics,400);return '<span class="mobimg"></span>'}
-  return u?`<img class="mobimg" loading="lazy" src="${esc(u)}" alt="">`:'<span class="mobimg"></span>';
+  if(u===undefined){picQ.add(name);if(Date.now()>=picRetryAt){clearTimeout(picT);picT=setTimeout(fetchPics,400)}return '<span class="mobimg"></span>'}
+  // some items (event items like Maple Leaf) have no picture on the wiki: show their initials instead
+  return u?`<img class="mobimg" loading="lazy" src="${esc(u)}" alt="">`:`<span class="mobimg ph" title="No picture on the wiki">${esc(name.replace(/[^A-Za-z0-9 ]/g,'').split(/\s+/).filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join(''))}</span>`;
 }
 async function fetchPics(){
-  const names=[...picQ].slice(0,50);picQ=new Set([...picQ].slice(50));if(!names.length)return;
+  const names=[...picQ].slice(0,50);picQ=new Set([...picQ].slice(50));if(!names.length)return;let ok=false;
   try{const j=await wapi('action=query&prop=pageimages&piprop=original&redirects=1&titles='+encodeURIComponent(names.join('|')));
     const from={};for(const x of (j.query.normalized||[]))from[x.to]=x.from;for(const x of (j.query.redirects||[]))from[x.to]=from[x.from]||x.from;
-    for(const pg of Object.values(j.query.pages||{})){const n=from[pg.title]||pg.title;itemPics[n]=pg.original?pg.original.source:''}
+    for(const pg of Object.values(j.query.pages||{})){const n=from[pg.title]||pg.title;itemPics[n]=pg.original?pg.original.source:''}ok=true
   }catch(e){}
+  // no answer (offline, wiki down): ask again in a minute instead of remembering "no picture"
+  if(!ok){for(const n of names)picQ.add(n);picRetryAt=Date.now()+60000;clearTimeout(picT);picT=setTimeout(fetchPics,60000);return}
   for(const n of names)if(itemPics[n]===undefined)itemPics[n]='';store.set('itemPics',itemPics);renderKills();if(picQ.size)picT=setTimeout(fetchPics,400);
 }
 const expMeso=name=>{const m=DB&&DB.mobs[name];return m&&m.meso?(m.meso[0]+m.meso[1])/2*m.meso[2]/100:null};

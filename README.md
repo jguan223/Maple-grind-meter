@@ -6,6 +6,8 @@ A browser overlay for MapleStory Classic that measures EXP and mesos per hour wh
 
 ## What it does
 - Reads the EXP / meso / item pickup messages in the bottom-right of the game with in-browser OCR (Tesseract.js). Your screen never leaves your computer.
+- Follows each pickup line as it scrolls up and fades, so every pickup is counted once, even when the same message repeats. When an amount doesn't fit the map's monsters (283 EXP where Bubblings give 28), a one-digit misread is corrected.
+- Items you pick up are matched to the database and listed with their picture and a count.
 - Cross-checks EXP against the numbers on the EXP bar and shows a match %.
 - Start / Pause / End, an optional training timer with an alarm that ends the session, or no limit.
 - Pop-out overlay: a small always-on-top window with totals and Pause/End.
@@ -20,7 +22,7 @@ A browser overlay for MapleStory Classic that measures EXP and mesos per hour wh
 ## Tips
 - Open **Calibration** to see what the reader sees. Raise or lower *Text brightness cut* until the messages read cleanly.
 - The map name is read from the two lines at the top of the minimap (area + map). The map's picture and its monsters (with pictures, best drops and a kill counter) come from the built-in Classic database.
-- The EXP bar (e.g. `EXP 88,666 [4.78%]`) is read every 3 seconds; when it can be read, EXP totals come from the bar, which is exact.
+- The EXP bar (e.g. `EXP 88,666 [4.78%]`) is read every second; when it can be read, EXP totals come from the bar, which is exact.
 - Share the game **window** (the Window tab), not the whole screen, so the game is captured even when it doesn't fit on your monitor.
 - Drag the middle of a box to move it, any corner or edge to resize. Press **Save settings for this PC** to keep your layout on that PC; **Copy settings code** moves it to another PC.
 - Paste a map's monster table (Monster · Lv · HP · EXP) from its NiaMeowDB page once to get kills per monster by name.
