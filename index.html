@@ -346,6 +346,13 @@ function signature(src,r){
   const d=tctx.getImageData(0,0,48,24).data,out=new Uint8Array(48*24);
   for(let i=0,j=0;i<d.length;i+=4,j++)out[j]=(d[i]+d[i+1]+d[i+2])/3;return out;
 }
+/* The text reader turns a canvas into a PNG before reading it. On some computers that step waits up to a
+   second for the browser to be idle, so the reader gets the raw pixels instead (a PGM/PPM image): same picture, no wait.
+   Black-and-white crops go as grey (P5), colour crops as RGB (P6). */
+function toPgm(c,d,rgb){const w=c.width,h=c.height,n=rgb?3:1;d=d||c.getContext('2d',{willReadFrequently:true}).getImageData(0,0,w,h).data;
+  const hd=`P${rgb?6:5}\n${w} ${h}\n255\n`,o=new Uint8Array(hd.length+w*h*n);for(let i=0;i<hd.length;i++)o[i]=hd.charCodeAt(i);
+  if(rgb)for(let i=0,j=hd.length;i<d.length;i+=4,j+=3){o[j]=d[i];o[j+1]=d[i+1];o[j+2]=d[i+2]}
+  else for(let i=0,j=hd.length;i<d.length;i+=4,j++)o[j]=(d[i]*77+d[i+1]*150+d[i+2]*29)>>8;return o}
 const sigDiff=(a,b)=>{if(!a||!b)return 255;let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length};
 
 /* worker-driven ticker: not slowed down when the tab is in the background */
@@ -373,13 +380,15 @@ async function scanMsgs(){
     const now=performance.now();const src=await grabFrame();if(!src)return;
     adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);
     const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
-    if(!(diff>0.6||now-lastOcrAt>1000)){if(src.close)src.close();return}
+    // an unchanged picture (the game or the screen share froze) says nothing new, and reading it again later
+    // would look like lines that stopped fading, so it is skipped
+    if(diff<0.02||!(diff>0.6||now-lastOcrAt>1000)){if(src.close)src.close();return}
     lastSig=sig;lastOcrAt=now;
     const bk=JSON.stringify(R.gain);if(MT.box!==bk){MT=makeTracker();MT.box=bk;msgDone.clear();msgNext=msgSeq+1}   // box moved: start the line tracking afresh
     const m=msgCrop(src,R.gain,OCR_SCALE,+$('thr').value);
     if(src.close)src.close();
     id=++msgSeq;const box=MT.box;let res=null;
-    try{const {data}=await w.recognize(m.c,{},{tsv:true,text:true,blocks:false});if(MT.box===box)res={lines:tsvLines(data.tsv,OCR_SCALE,m),t:now/1000,sh:m.sh};showCalib(m.c,data.text)}
+    try{const {data}=await w.recognize(m.px,{},{tsv:true,text:true,blocks:false});if(MT.box===box)res={lines:tsvLines(data.tsv,OCR_SCALE,m),t:now/1000,sh:m.sh};showCalib(m.c,data.text)}
     finally{if(MT.box===box)msgDone.set(id,res);ocrMs.push(performance.now()-now);if(ocrMs.length>12)ocrMs.shift()}
     while(msgDone.has(msgNext)){const r=msgDone.get(msgNext);msgDone.delete(msgNext);msgNext++;if(!r)continue;
       MGM.lastLines=r.lines;
@@ -388,7 +397,7 @@ async function scanMsgs(){
     }
   }catch(e){console.warn(e)}finally{if(second)ocr3Busy=false;else ocrBusy=false}
   const ms=[...ocrMs].sort((x,y)=>x-y)[ocrMs.length>>1]||0;
-  if(!ocr3Asked&&ocrMs.length>=8&&ms>350&&+$('scanMs').value<=250){ocr3Asked=true;
+  if(!ocr3Asked&&ocrMs.length>=5&&ms>350&&+$('scanMs').value<=250){ocr3Asked=true;
     Tesseract.createWorker('eng',1).then(async x=>{await x.setParameters(MSG_PARAMS);ocr3=x}).catch(()=>{})}
   if(ocrMs.length&&$('ocrRate'))$('ocrRate').textContent=`Pickup reader: ${Math.round(ms)} ms per reading${ocr3?', 2 readers':''}.`;
 }
@@ -401,8 +410,8 @@ async function scanSide(){
   try{
     const src=await grabFrame();if(!src)return;
     let cb=null,cm=null,sig=null;
-    if(wantBar){lastBarAt=now;cb=document.createElement('canvas');const t=cropTo(src,R.bar,6,0);cb.width=t.width;cb.height=t.height;cb.getContext('2d').drawImage(t,0,0)}
-    if(wantMap){lastMapAt=now;sig=signature(src,R.map);cm=document.createElement('canvas');const t=cropTo(src,R.map,4,0);cm.width=t.width;cm.height=t.height;cm.getContext('2d').drawImage(t,0,0)}
+    if(wantBar){lastBarAt=now;cb=toPgm(cropTo(src,R.bar,6,0))}
+    if(wantMap){lastMapAt=now;sig=signature(src,R.map);cm=toPgm(cropTo(src,R.map,4,0))}
     if(src.close)src.close();
     if(cb){await w.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});const {data}=await w.recognize(cb);onBarText(data.text)}
     if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'-:.<>()& "});const {data}=await w.recognize(cm);await onMapTitle(data.text);lastMini=sig}
@@ -422,7 +431,7 @@ function plainCrop(src,r,scale,white){
 }
 async function ocrWords(w,c,r,scale,W,H){
   await w.setParameters({tessedit_pageseg_mode:'11',tessedit_char_whitelist:''});
-  const {data}=await w.recognize(c,{},{tsv:true,text:false,blocks:false,hocr:false});
+  const {data}=await w.recognize(toPgm(c,null,true),{},{tsv:true,text:false,blocks:false,hocr:false});
   return (data.tsv||'').split('\n').map(l=>l.split('\t')).filter(a=>a.length>=12&&a[11]&&a[11].trim()).map(a=>({b:a[2]+'.'+a[3]+'.'+a[4],t:a[11].trim(),
     x0:r.x*W+ +a[6]/scale,y0:r.y*H+ +a[7]/scale,x1:r.x*W+(+a[6]+ +a[8])/scale,y1:r.y*H+(+a[7]+ +a[9])/scale}));
 }
@@ -540,7 +549,7 @@ function msgCrop(src,r,scale,cut){
     for(let y=0;y<h2;y++){let s=0;for(let x=0;x<w2;x++){s+=L[y*w2+x];I[(y+1)*W1+x+1]=I[y*W1+x+1]+s}}
     for(let y=0;y<h2;y++){const y0=Math.max(0,y-rad),y1=Math.min(h2,y+rad+1);for(let x=0;x<w2;x++){const x0=Math.max(0,x-rad),x1=Math.min(w2,x+rad+1),j=y*w2+x;
       const m=(I[y1*W1+x1]-I[y0*W1+x1]-I[y1*W1+x0]+I[y0*W1+x0])/((x1-x0)*(y1-y0));const v=L[j]>150&&L[j]>m+18?0:255;d[j*4]=d[j*4+1]=d[j*4+2]=v}}}
-  wctx.putImageData(im,0,0);return{c:work,L1,sw,sh};
+  wctx.putImageData(im,0,0);return{c:work,px:toPgm(work,d),L1,sw,sh};
 }
 // the reader's words grouped into lines, in the crop's own pixels, with how bright (unfaded) each line is
 function tsvLines(tsv,scale,m){
@@ -617,7 +626,7 @@ function makeTracker(){
     for(const l of L){const j=Math.round((T.bottom-l.yc)/T.pitch);if(j<0||j>T.maxSlot+1)continue;const o=cur.get(j);if(!o||l.int*nrm(l.text).length>o.int*nrm(o.text).length)cur.set(j,{...l,slot:j,wd:l.x1-l.x0})}
     for(const [j,c] of cur)if(j===0||c.int>(T.fresh||0))T.fs.push(c.int);
     T.fs=T.fs.slice(-30);T.fresh=[...T.fs].sort((a,b)=>b-a).slice(0,5).reduce((a,b,i,arr)=>a+b/arr.length,0)||null;
-    const F=T.fresh||180,decay=45*dt+12,ub=Math.max(-8,8-12*dt),out=[];   // a line fades by at most `decay` between scans, and never brightens by more than `ub`
+    const F=T.fresh||180,decay=45*dt+12,ub=Math.max(-8,8-12*dt),out=[];   // a line fades by at most `decay` between scans, and has faded by at least -`ub`
     if(wasFirst){for(const [j,c] of cur)T.stack.push({id:T.id++,slot:j,int:c.int,text:c.text,best:c.text,bestInt:c.int,wd:c.wd,full:c.x1>=T.right-T.H*.8,reads:[],counted:true,miss:0});return out}
     // how many new lines pushed the stack up since the last scan? Try every k and keep the one that best explains
     // what is on screen now: each old line k slots further up with the same text, the same width (lines are
@@ -644,7 +653,7 @@ function makeTracker(){
     for(let j=0;j<k;j++){const c=cur.get(j),e={id:T.id++,slot:j,int:F*.85,text:'',wd:0,full:false,reads:[],counted:false,miss:c?0:1,ph:!c,born:now};if(c)see(e,c);ns.push(e)}
     for(const e of T.stack){e.slot+=k;const c=cur.get(e.slot);if(c)see(e,c);else e.miss++;
       if(e.miss<3&&e.slot<=T.maxSlot+1)ns.push(e);else if(!e.counted)out.push(...commit(e,true))}
-    for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.7){const p=c.p||fixAmount(parseMsg(c.text));if(p)e.reads.push({...p,w:Math.max(.05,c.conf/100)*(c.int/F)*(p.weak&&!p.fixed?.5:1)})}}
+    for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.6){const p=c.p||fixAmount(parseMsg(c.text));if(p)e.reads.push({...p,w:Math.max(.05,c.conf/100)*(c.int/F)*(p.weak&&!p.fixed?.5:1)})}}
     T.stack=ns;if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key)});
     for(const e of T.stack)if(!e.counted&&(e.slot>=3||e.int<F*.72||e.reads.length))out.push(...commit(e,e.slot>=3||e.int<F*.72));
     if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key+'#'+(o.id||''))});
