@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maple Grind Meter</title>
+<style>
+:root{--bg:#14110d;--panel:#1f1a14;--line:#3a3127;--ink:#f3ead8;--mute:#b3a58c;--exp:#8fd14f;--meso:#f2c14e;--item:#7ec8e3;--warn:#ff7a59}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:#0f0c09;position:sticky;top:0;z-index:5}
+h1{font-size:18px;margin:0 12px 0 0;letter-spacing:.2px}
+h2{font-size:15px;margin:0 0 8px;color:var(--mute);font-weight:600}
+button{font:inherit;background:#2c251c;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer;min-height:38px}
+button:hover:not(:disabled){border-color:#6b5a44}
+button:disabled{opacity:.4;cursor:default}
+button.go{background:#2f4a1d;border-color:#4d7a2c}button.stop{background:#4a231b;border-color:#7a3a2c}
+input,select{font:inherit;background:#120f0b;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+label{color:var(--mute);font-size:13px}
+main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:14px;padding:14px 16px}
+@media(max-width:900px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.stat .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.stat .s{color:var(--mute);font-size:13px;font-variant-numeric:tabular-nums}
+.exp{color:var(--exp)}.meso{color:var(--meso)}.itm{color:var(--item)}
+#clock{font-size:34px;font-weight:700;font-variant-numeric:tabular-nums}
+#stage{position:relative;background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9}
+#stage video{width:100%;height:100%;object-fit:contain;display:block}
+[hidden]{display:none!important}
+#stage .hint{position:absolute;inset:0;display:grid;place-items:center;color:var(--mute);text-align:center;padding:20px}
+.region{position:absolute;border:2px dashed;cursor:move}
+.region span{position:absolute;top:-20px;left:0;font-size:12px;padding:1px 5px;border-radius:4px;color:#000;white-space:nowrap}
+.region i{position:absolute;right:-6px;bottom:-6px;width:12px;height:12px;cursor:nwse-resize;border-radius:2px}
+#rGain{border-color:var(--exp)}#rGain span,#rGain i{background:var(--exp)}
+#rMap{border-color:var(--item)}#rMap span,#rMap i{background:var(--item)}
+#rBar{border-color:#e9a3ff}#rBar span,#rBar i{background:#e9a3ff}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.feed{max-height:220px;overflow:auto;font-variant-numeric:tabular-nums;font-size:14px}
+.feed div{padding:2px 0;border-bottom:1px solid #2a231b}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;background:#2c251c;font-size:12px;color:var(--mute)}
+#ocrView{max-width:100%;image-rendering:pixelated;border:1px solid var(--line);background:#fff}
+pre{white-space:pre-wrap;font-size:12px;color:var(--mute);margin:6px 0 0;max-height:140px;overflow:auto}
+dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;max-width:760px;width:94vw;padding:18px}
+dialog::backdrop{background:#000a}
+.big{font-size:22px;font-weight:700}
+.alarm{animation:fl .5s steps(2) infinite}@keyframes fl{50%{background:#7a3a2c}}
+small{color:var(--mute)}
+a{color:var(--item)}
+details summary{cursor:pointer;color:var(--mute)}
+footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
+</style>
+</head>
+<body>
+<header id="hdr">
+  <h1>Maple Grind Meter</h1>
+  <button id="bShare">1. Share game screen</button>
+  <button id="bStart" class="go" disabled>Start</button>
+  <button id="bPause" disabled>Pause</button>
+  <button id="bEnd" class="stop" disabled>End</button>
+  <label>Timer (min, 0 = no limit) <input id="tMin" type="number" min="0" step="5" value="0" style="width:80px"></label>
+  <button id="bPip" title="Small always-on-top window you can put over the game">Pop-out overlay</button>
+  <span id="status" class="pill">Not sharing</span>
+</header>
+
+<main>
+  <section>
+    <div class="card">
+      <div id="stage">
+        <video id="vid" muted playsinline></video>
+        <div class="hint" id="hint">Click <b>Share game screen</b> and pick the MapleStory window (works windowed or fullscreen; in fullscreen pick the whole screen).<br>Then drag the green box over the EXP / meso pickup messages (bottom right)<br>the blue box over the map name (top left, by the minimap)<br>and the pink box over the numbers on the EXP bar.</div>
+        <div class="region" id="rGain" hidden><span>EXP / meso / item messages</span><i></i></div>
+        <div class="region" id="rMap" hidden><span>Map name</span><i></i></div>
+        <div class="region" id="rBar" hidden><span>EXP bar numbers</span><i></i></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>Scan speed
+          <select id="scanMs"><option value="150">Fast (≈6/s)</option><option value="250" selected>Normal (≈4/s)</option><option value="400">Light (≈2.5/s)</option><option value="700">Lightest (≈1.5/s)</option></select>
+        </label>
+        <label>Text brightness cut <input id="thr" type="number" min="60" max="250" value="140" style="width:70px"></label>
+        <button id="bReset">Reset boxes</button>
+        <label><input type="checkbox" id="newestTop"> Newest message is on top</label>
+        <small>Only the boxed areas are read, and only when they change, to keep CPU low.</small>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Current map</h2>
+      <div class="row">
+        <input id="mapName" placeholder="Read from screen, or type it" style="flex:1 1 220px">
+        <a id="mapLink" href="https://meowdb.com/msclassic/maps" target="_blank" rel="noopener">Mobs, drops and prices on meowdb ↗</a>
+        <button id="bMapSide">Open meowdb beside the game</button>
+      </div>
+      <small>Map name is read every 8 seconds. The meowdb link opens that map's search, where each mob's drops and their Free Market prices are listed.</small>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <details>
+        <summary>Calibration: what the reader sees</summary>
+        <div style="margin-top:8px"><canvas id="ocrView"></canvas></div>
+        <pre id="ocrText">(nothing yet)</pre>
+        <div class="row" style="margin-top:8px">
+          <label>EXP pattern <input id="pExp" style="width:260px"></label>
+          <label>Meso pattern <input id="pMeso" style="width:260px"></label>
+          <label>Item pattern <input id="pItem" style="width:260px"></label>
+          <button id="bPatReset">Default patterns</button>
+        </div>
+        <small>These keyword patterns (regular expressions) decide whether a line is EXP, mesos or an item. The amount is the number in brackets; a second number on an EXP line is the party bonus. Lines with "lost" or "used" are ignored.</small>
+      </details>
+    </div>
+  </section>
+
+  <section>
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><div id="clock">00:00:00</div><div id="remain" class="pill">No time limit</div></div>
+      <div class="stats" style="margin-top:8px">
+        <div class="stat"><div class="v exp" id="sExp">0</div><div class="s">EXP · <span id="sExpHr">0</span>/hr</div></div>
+        <div class="stat"><div class="v meso" id="sMeso">0</div><div class="s">mesos · <span id="sMesoHr">0</span>/hr</div></div>
+        <div class="stat"><div class="v itm" id="sItems">0</div><div class="s">items picked up</div></div>
+        <div class="stat" style="grid-column:1/-1"><div class="s"><label style="color:var(--ink)"><input type="checkbox" id="useBar" checked> Cross-check with the EXP bar</label> · <span id="barInfo">EXP bar not read yet</span></div></div>
+        <div class="stat"><div class="v" id="sLast5" style="font-size:18px">–</div><div class="s">last 5 min pace (EXP · mesos /hr)</div></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h2>Live pickups</h2>
+      <div class="feed" id="feed"><small>Nothing yet.</small></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Kills by monster</h2>
+        <label style="font-size:14px;color:var(--ink)"><input type="checkbox" id="solo" checked> Not in a party (solo)</label></div>
+      <div id="party" class="row" style="margin:6px 0"></div>
+      <div class="scroll"><table id="kills"></table></div>
+      <details style="margin-top:8px"><summary>Monsters on this map (paste from meowdb)</summary>
+        <small>On the map's meowdb page, select the <b>Monster · Lv · HP · EXP</b> table, copy it and paste it here. It is saved for this map. Without it, kills are grouped by EXP amount.</small>
+        <textarea id="mobPaste" rows="5" style="width:100%;margin-top:6px;font:13px monospace;background:#120f0b;color:var(--ink);border:1px solid var(--line);border-radius:6px" placeholder="Cold Eye	40	1,894	85	39%&#10;Drake	50	2,950	133	41%"></textarea>
+        <div id="mobParsed"><small></small></div>
+      </details>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Best maps from your sessions</h2>
+        <select id="rankBy"><option value="exp">by EXP/hr</option><option value="meso">by mesos/hr</option><option value="both">by both (ranked together)</option></select></div>
+      <div class="scroll" style="margin-top:8px"><table id="hist"></table></div>
+      <div class="row" style="margin-top:8px"><button id="bHistCopy">Copy table</button><button id="bHistClear">Clear history</button></div>
+    </div>
+  </section>
+</main>
+<footer>Runs entirely in your browser: nothing is installed and your screen never leaves this computer. Map data and prices: <a href="https://meowdb.com/msclassic" target="_blank" rel="noopener">NiaMeowDB</a>. Text reading by Tesseract.js.</footer>
+
+<dialog id="dlg">
+  <div class="row" style="justify-content:space-between"><div class="big">Session summary</div><button id="bDlgClose">Close</button></div>
+  <div id="sumBody" style="margin-top:10px"></div>
+  <div class="row" style="margin-top:12px"><button id="bSumCopy">Copy summary</button><button id="bSumDl">Download .md</button><button id="bSumShare">Share…</button></div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+{
+const $=id=>document.getElementById(id);
+const fmt=n=>Math.round(n).toLocaleString();
+const hms=ms=>{const s=Math.floor(ms/1000);return [s/3600|0,(s%3600)/60|0,s%60].map(x=>String(x).padStart(2,'0')).join(':')};
+const store={get(k,d){try{const v=localStorage.getItem('mgm.'+k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem('mgm.'+k,JSON.stringify(v))}catch{}}};
+
+/* ---------- reading the pickup lines ----------
+   OCR on small game text is noisy ("experience" -> "expenence", "+" -> "4", "$", "[").
+   So: spot the kind of line with forgiving keywords, then take the numbers in brackets. */
+const DEF={exp:String.raw`ex?p(?:er|en)|xper|erience|enence|\bexp\b|\bxp\b`,
+           meso:String.raw`[mn]es[o0]s?|r?ies[o0]s|\bmeso`,
+           item:String.raw`\bi?te?r?m\b|\bitem|\bterm\b|\btem\b`};
+const pat={exp:store.get('pExp',DEF.exp),meso:store.get('pMeso',DEF.meso),item:store.get('pItem',DEF.item)};
+for(const k of ['exp','meso','item']){const el=$('p'+k[0].toUpperCase()+k.slice(1));el.value=pat[k];el.onchange=()=>{pat[k]=el.value;store.set('p'+k[0].toUpperCase()+k.slice(1),el.value)}}
+$('bPatReset').onclick=()=>{for(const k of ['exp','meso','item']){pat[k]=DEF[k];const id='p'+k[0].toUpperCase()+k.slice(1);$(id).value=DEF[k];store.set(id,DEF[k])}};
+const num=s=>parseInt(String(s).replace(/[^\d]/g,''),10)||0;
+const known={exp:new Map(),meso:new Map()}; // values read cleanly (with a visible "+"), used to fix "+" misread as a digit
+let mobExpSet=new Set();
+function amounts(L){
+  // every bracketed or plus-prefixed amount on the line, in order
+  const out=[];const re=/[(\[{]\s*([^\d\s()\[\]{}]{0,2})\s*([\d][\d,.]*)\s*[)\]}]?|\+\s?([\d][\d,.]*)/g;let m;
+  while((m=re.exec(L))){if(m[3]){out.push({v:num(m[3]),clean:true})}else{out.push({v:num(m[2]),raw:m[2].replace(/[^\d]/g,''),clean:!!m[1]})}}
+  return out;
+}
+function fixPlus(a,kind){
+  if(a.clean||!a.raw||a.raw.length<2)return a.v;
+  const first=a.raw[0],rest=num(a.raw.slice(1));
+  if(first==='1'||first==='4'||first==='7'){ // "+" commonly comes back as 1, 4 or 7
+    if(known[kind].has(rest)||(kind==='exp'&&mobExpSet.has(rest)))return rest;
+    if(known[kind].has(a.v))return a.v;
+  }
+  return a.v;
+}
+function parseLine(raw){
+  const line=raw.replace(/[|_~`]/g,' ').replace(/\s+/g,' ').trim();
+  if(line.length<5||/\blost\b|\bused\b|\bdropped\b/i.test(line))return null;
+  try{
+    const isExp=new RegExp(pat.exp,'i').test(line),isMeso=!isExp&&new RegExp(pat.meso,'i').test(line);
+    if(isExp||isMeso){
+      const kind=isExp?'exp':'meso',am=amounts(line);if(!am.length)return null;
+      for(const a of am)if(a.clean&&a.v>0)known[kind].set(a.v,(known[kind].get(a.v)||0)+1);
+      const v=fixPlus(am[0],kind);if(!(v>0))return null;
+      if(kind==='meso')return{type:'meso',value:v,key:'m'+v};
+      const bonus=am[1]?fixPlus(am[1],kind):0; // a second amount is the party bonus, e.g. "(+85) (+21)"
+      return{type:'exp',value:v+bonus,base:v,bonus,key:'e'+v+'_'+bonus};
+    }
+    if(new RegExp(pat.item,'i').test(line)||/gained|obtained|acquired/i.test(line)){
+      const m=/[(\[{]\s*([A-Za-z'][^)\]}]{1,40}?)\s*[)\]}]?\s*(?:x\s?\d+)?$/.exec(line);if(!m)return null;
+      const name=m[1].replace(/[^\w' :-]/g,'').trim();if(name.length<3)return null;
+      return{type:'item',value:1,name,key:'i'+name.toLowerCase()};
+    }
+  }catch(e){}
+  return null;
+}
+
+
+/* ---------- regions ---------- */
+const DEFR={gain:{x:.6,y:.55,w:.39,h:.35},map:{x:.0,y:.0,w:.28,h:.09},bar:{x:.3,y:.94,w:.4,h:.05}};
+let R=store.get('regions',structuredClone(DEFR));if(!R.bar)R.bar=structuredClone(DEFR.bar);
+/* Fullscreen vs windowed: boxes are remembered per capture size. When the size changes to one we
+   have not seen, the message box stays pinned to the bottom-right corner and the map box to the
+   top-left, keeping their size relative to the game's height (the UI scales with height). */
+let capSize=null;const profiles=store.get('profiles',{});
+function saveRegions(){store.set('regions',R);if(capSize){profiles[capSize.k]=structuredClone(R);store.set('profiles',profiles)}}
+function adaptTo(W,H){
+  const k=W+'x'+H;if(capSize&&capSize.k===k)return;
+  if(profiles[k])R=structuredClone(profiles[k]);
+  else if(capSize){const {W:W0,H:H0}=capSize,f=H/H0,g=R.gain,m=R.map;
+    const gw=Math.min(1,g.w*W0*f/W),gh=Math.min(1,g.h*H0*f/H),gr=(1-g.x-g.w)*W0*f/W,gb=(1-g.y-g.h)*H0*f/H;
+    R={gain:{w:gw,h:gh,x:Math.max(0,1-gw-gr),y:Math.max(0,1-gh-gb)},map:{x:m.x*W0*f/W,y:m.y*H0*f/H,w:Math.min(1,m.w*W0*f/W),h:Math.min(1,m.h*H0*f/H)},
+      bar:(()=>{const b=R.bar,bw=Math.min(1,b.w*W0*f/W),bh=Math.min(1,b.h*H0*f/H),cx=(b.x+b.w/2-.5)*W0*f/W+.5,bb=(1-b.y-b.h)*H0*f/H;return{w:bw,h:bh,x:Math.min(1-bw,Math.max(0,cx-bw/2)),y:Math.max(0,1-bh-bb)}})()};}
+  const changed=!!capSize;capSize={W,H,k};saveRegions();lastSig=null;placeBoxes();
+  if(changed)setStatus((state==='run'?'Running':'Ready')+' · game size changed to '+W+'×'+H+', boxes adjusted');
+}
+const stage=$('stage');
+function placeBoxes(){
+  const v=$('vid');if(!v.videoWidth)return;
+  const sw=stage.clientWidth,sh=stage.clientHeight,va=v.videoWidth/v.videoHeight,sa=sw/sh;
+  const dw=va>sa?sw:sh*va,dh=va>sa?sw/va:sh,ox=(sw-dw)/2,oy=(sh-dh)/2;
+  stage._d={dw,dh,ox,oy};
+  for(const [k,id] of [['gain','rGain'],['map','rMap'],['bar','rBar']]){const el=$(id),r=R[k];el.hidden=false;
+    Object.assign(el.style,{left:ox+r.x*dw+'px',top:oy+r.y*dh+'px',width:r.w*dw+'px',height:r.h*dh+'px'})}
+}
+function dragify(id,k){
+  const el=$(id);
+  el.onpointerdown=e=>{e.preventDefault();const d=stage._d;if(!d)return;const resize=e.target.tagName==='I';const sx=e.clientX,sy=e.clientY,o={...R[k]};
+    el.setPointerCapture(e.pointerId);
+    el.onpointermove=ev=>{const dx=(ev.clientX-sx)/d.dw,dy=(ev.clientY-sy)/d.dh;const r=R[k];
+      if(resize){r.w=Math.min(1-r.x,Math.max(.03,o.w+dx));r.h=Math.min(1-r.y,Math.max(.02,o.h+dy))}
+      else{r.x=Math.min(1-r.w,Math.max(0,o.x+dx));r.y=Math.min(1-r.h,Math.max(0,o.y+dy))}placeBoxes()};
+    el.onpointerup=()=>{el.onpointermove=null;saveRegions();lastSig=null}};
+}
+dragify('rGain','gain');dragify('rMap','map');dragify('rBar','bar');
+new ResizeObserver(placeBoxes).observe(stage);
+$('bReset').onclick=()=>{R=structuredClone(DEFR);saveRegions();placeBoxes()};
+
+/* ---------- capture ---------- */
+let stream=null,track=null,grabber=null,ocr=null,ocrBusy=false;
+$('bShare').onclick=async()=>{
+  try{
+    stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:10,max:15},cursor:'never'},audio:false});
+  }catch(e){setStatus('Screen share was cancelled');return}
+  track=stream.getVideoTracks()[0];
+  const v=$('vid');v.srcObject=stream;await v.play().catch(()=>{});
+  grabber=('ImageCapture' in window)?new ImageCapture(track):null;
+  v.onloadedmetadata=placeBoxes;v.onresize=placeBoxes;setTimeout(placeBoxes,300);
+  $('hint').hidden=true;$('bStart').disabled=false;
+  track.onended=()=>{setStatus('Screen share stopped');if(state==='run')pause()};
+  setStatus('Sharing · loading text reader…');
+  if(!ocr){
+    ocr=await Tesseract.createWorker('eng',1);
+    await ocr.setParameters({tessedit_pageseg_mode:'6',preserve_interword_spaces:'1',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "});
+  }
+  setStatus(state==='run'?'Running':'Ready · press Start');
+  startLoop();
+};
+function setStatus(t){$('status').textContent=t}
+
+const work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true});
+const tiny=document.createElement('canvas');tiny.width=48;tiny.height=24;const tctx=tiny.getContext('2d',{willReadFrequently:true});
+let lastSig=null,lastOcrAt=0,lastMapAt=0,lastBarAt=0;let OCR_SCALE=+(new URLSearchParams(location.search).get('scale')||5);
+async function grabFrame(){
+  const v=$('vid');
+  if(grabber&&track&&track.readyState==='live'){try{return await grabber.grabFrame()}catch(e){}}
+  return v.videoWidth?v:null;
+}
+function cropTo(src,r,scale,thr){
+  const W=src.videoWidth||src.width,H=src.videoHeight||src.height;
+  const sx=r.x*W,sy=r.y*H,sw=r.w*W,sh=r.h*H;
+  work.width=Math.max(8,Math.round(sw*scale));work.height=Math.max(8,Math.round(sh*scale));
+  wctx.imageSmoothingEnabled=true;wctx.drawImage(src,sx,sy,sw,sh,0,0,work.width,work.height);
+  const img=wctx.getImageData(0,0,work.width,work.height),d=img.data;
+  for(let i=0;i<d.length;i+=4){const l=.299*d[i]+.587*d[i+1]+.114*d[i+2];const o=l>thr?0:255;d[i]=d[i+1]=d[i+2]=o}
+  wctx.putImageData(img,0,0);return work;
+}
+function signature(src,r){
+  const W=src.videoWidth||src.width,H=src.videoHeight||src.height;
+  tctx.drawImage(src,r.x*W,r.y*H,r.w*W,r.h*H,0,0,48,24);
+  const d=tctx.getImageData(0,0,48,24).data,out=new Uint8Array(48*24);
+  for(let i=0,j=0;i<d.length;i+=4,j++)out[j]=(d[i]+d[i+1]+d[i+2])/3;return out;
+}
+const sigDiff=(a,b)=>{if(!a||!b)return 255;let s=0;for(let i=0;i<a.length;i++)s+=Math.abs(a[i]-b[i]);return s/a.length};
+
+/* worker-driven ticker: not slowed down when the tab is in the background */
+const tickW=new Worker(URL.createObjectURL(new Blob([`let t=null;onmessage=e=>{clearInterval(t);if(e.data>0)t=setInterval(()=>postMessage(0),e.data)}`],{type:'text/javascript'})));
+let looping=false;
+function startLoop(){looping=true;tickW.postMessage(+$('scanMs').value)}
+$('scanMs').onchange=()=>{store.set('scanMs',$('scanMs').value);if(looping)startLoop()};
+$('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr',140);$('thr').onchange=()=>store.set('thr',$('thr').value);
+tickW.onmessage=()=>{onTick();scan()};
+
+async function scan(){
+  if(ocrBusy||!ocr||!stream)return;
+  const scanning=state==='run'; const now=performance.now();
+  const wantMap=now-lastMapAt>8000;
+  if(!scanning&&!wantMap)return;
+  ocrBusy=true;
+  try{
+    const src=await grabFrame();if(!src)return;
+    adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);
+    if(scanning){
+      const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
+      if(diff>1.2||now-lastOcrAt>2500){
+        lastSig=sig;lastOcrAt=now;
+        const c=cropTo(src,R.gain,OCR_SCALE,+$('thr').value);
+        const {data}=await ocr.recognize(c);
+        showCalib(c,data.text);
+        ingest(data.text);
+      }
+    }
+    if(scanning&&$('useBar').checked&&performance.now()-lastBarAt>2000){
+      lastBarAt=performance.now();
+      const c=cropTo(src,R.bar,4,+$('thr').value);
+      const {data}=await ocr.recognize(c);
+      onBarText(data.text);
+    }
+    if(wantMap){
+      lastMapAt=performance.now();
+      const c=cropTo(src,R.map,2.5,+$('thr').value);
+      const {data}=await ocr.recognize(c);
+      onMapText(data.text);
+    }
+    if(src.close)src.close();
+  }catch(e){console.warn(e)}finally{ocrBusy=false}
+}
+function showCalib(c,text){
+  if(!$('ocrView').closest('details').open)return;
+  const v=$('ocrView');v.width=c.width;v.height=c.height;v.getContext('2d').drawImage(c,0,0);$('ocrText').textContent=text||'(no text)';
+}
+
+/* ---------- de-duplicating messages that stay on screen ----------
+   Pickup messages stack up: a new one appears at the bottom and older ones move up and fade.
+   Each scan is lined up against the previous one (longest common subsequence); only lines
+   below the last line we already knew are new. A line OCR misses for one scan is not re-counted. */
+let prevLines=[],prevAt=0;
+function lcsLastMatch(a,b){ // index in b of the last element that is part of an LCS of a and b, or -1
+  const n=a.length,m=b.length,T=Array.from({length:n+1},()=>new Int16Array(m+1));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)T[i][j]=a[i]===b[j]?T[i+1][j+1]+1:Math.max(T[i+1][j],T[i][j+1]);
+  let i=0,j=0,last=-1;while(i<n&&j<m){if(a[i]===b[j]){last=j;i++;j++}else if(T[i+1][j]>=T[i][j+1])i++;else j++}
+  return last;
+}
+function ingest(text){
+  const now=performance.now();
+  let cur=[];for(const raw of text.split('\n')){const p=parseLine(raw);if(p)cur.push(p)}
+  if($('newestTop').checked)cur.reverse();
+  if(!cur.length){if(now-prevAt>4000)prevLines=[];return}
+  const keys=cur.map(p=>p.key);
+  const last=(now-prevAt>4000||!prevLines.length)?-1:lcsLastMatch(prevLines,keys);
+  for(let j=last+1;j<cur.length;j++)record(cur[j]);
+  prevLines=keys;prevAt=now;
+}
+
+/* ---------- session ---------- */
+let state='idle',S=null,runStart=0,alarmCtx=null,alarmTimer=null;
+function newSession(){return{solo:$('solo').checked,id:Date.now(),started:new Date().toISOString(),elapsed:0,events:[],maps:{},limitMin:+$('tMin').value||0}}
+function elapsed(){return S?S.elapsed+(state==='run'?Date.now()-runStart:0):0}
+const recentVals={exp:[],meso:[]};
+function isOutlier(p){ // a misread like "+231" -> "5842" shows up as one wildly larger value
+  const r=recentVals[p.type];if(!r)return false;
+  const med=r.length>=5?[...r].sort((a,b)=>a-b)[r.length>>1]:0;
+  const bad=med>0&&p.value>15*med;
+  if(!bad){r.push(p.value);if(r.length>25)r.shift()}
+  return bad;
+}
+function record(p){
+  if(state!=='run'||isOutlier(p))return;
+  const e={t:elapsed(),type:p.type,value:p.value};if(p.name)e.name=p.name;if(p.bonus){e.base=p.base;e.bonus=p.bonus}S.events.push(e);
+  if(p.type==='exp'&&S.bar&&S.bar.last!=null)S.bar.msg=(S.bar.msg||0)+p.value;
+  const f=$('feed');if(f.firstChild&&f.firstChild.tagName==='SMALL')f.innerHTML='';
+  const d=document.createElement('div');d.className=p.type==='exp'?'exp':p.type==='meso'?'meso':'itm';
+  d.textContent=`${hms(e.t)}  ${p.type==='item'?'Item: '+p.name:'+'+fmt(p.value)+(p.type==='exp'?' EXP':' mesos')}`;
+  f.prepend(d);while(f.childElementCount>80)f.lastChild.remove();
+  persistLive();
+}
+let persistT=0;function persistLive(){const n=Date.now();if(n-persistT>5000){persistT=n;store.set('live',{S,state:'paused'})}}
+$('bStart').onclick=()=>{
+  unlockAudio();
+  if(state==='idle'||state==='done'){S=newSession();S.maps[curMap()]=0;$('feed').innerHTML='<small>Nothing yet.</small>'}
+  S.limitMin=+$('tMin').value||0;
+  state='run';runStart=Date.now();lastSig=null;barPend=null;if(S.bar)S.bar.last=null;
+  if(Notification&&Notification.permission==='default'&&S.limitMin)Notification.requestPermission();
+  setButtons();setStatus('Running');
+};
+function pause(){if(state!=='run')return;S.elapsed+=Date.now()-runStart;state='paused';setButtons();setStatus('Paused');store.set('live',{S,state})}
+$('bPause').onclick=()=>state==='run'?pause():$('bStart').onclick();
+$('bEnd').onclick=()=>endSession();
+function setButtons(){
+  $('bStart').disabled=!stream||state==='run';$('bStart').textContent=state==='paused'?'Resume':'Start';
+  $('bPause').disabled=state!=='run'&&state!=='paused';$('bPause').textContent=state==='paused'?'Resume':'Pause';
+  $('bEnd').disabled=!(state==='run'||state==='paused');
+  renderPip();
+}
+let lastTickMap=0;
+function onTick(){
+  if(!S)return;
+  const t=elapsed();
+  if(state==='run'){
+    const m=curMap(),n=Date.now();S.maps[m]=(S.maps[m]||0)+(lastTickMap?n-lastTickMap:0);lastTickMap=n;
+  }else lastTickMap=0;
+  $('clock').textContent=hms(t);
+  const tot=totals(S.events),hr=t/3600000;
+  $('sExp').textContent=fmt(tot.exp);$('sMeso').textContent=fmt(tot.meso);$('sItems').textContent=fmt(tot.items);
+  $('sExpHr').textContent=hr>0.003?fmt(tot.exp/hr):'–';$('sMesoHr').textContent=hr>0.003?fmt(tot.meso/hr):'–';
+  const w=S.events.filter(e=>e.t>t-300000),win=Math.min(t,300000)/3600000,l=totals(w);
+  $('sLast5').textContent=win>0.003?`${fmt(l.exp/win)} · ${fmt(l.meso/win)}`:'–';
+  if(S.limitMin){const left=S.limitMin*60000-t;$('remain').textContent=left>0?'Ends in '+hms(left):'Time up';
+    if(left<=0&&state==='run'){endSession(true)}}
+  else $('remain').textContent='No time limit';
+  if(!onTick.k||Date.now()-onTick.k>2000){onTick.k=Date.now();renderKills();renderBar()}
+  renderPip();
+}
+function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items++}return{exp,meso,items}}
+
+/* ---------- alarm ---------- */
+function unlockAudio(){try{alarmCtx=alarmCtx||new AudioContext();alarmCtx.resume()}catch{}}
+function ringAlarm(){
+  let n=0;clearInterval(alarmTimer);$('hdr').classList.add('alarm');document.title='⏰ Training time is up';
+  const beep=()=>{if(!alarmCtx)return;const o=alarmCtx.createOscillator(),g=alarmCtx.createGain();o.type='square';o.frequency.value=n%2?660:880;
+    g.gain.setValueAtTime(.18,alarmCtx.currentTime);g.gain.exponentialRampToValueAtTime(.001,alarmCtx.currentTime+.35);o.connect(g).connect(alarmCtx.destination);o.start();o.stop(alarmCtx.currentTime+.4)};
+  alarmTimer=setInterval(()=>{beep();if(++n>24)stopAlarm()},450);beep();
+  try{if(Notification.permission==='granted')new Notification('Training time is up',{body:'Your Maple Grind Meter session has ended.'})}catch{}
+}
+function stopAlarm(){clearInterval(alarmTimer);$('hdr').classList.remove('alarm');document.title='Maple Grind Meter'}
+
+/* ---------- end + summary ---------- */
+function endSession(timeUp){
+  if(!S)return;if(state==='run')S.elapsed+=Date.now()-runStart;
+  state='done';S.ended=new Date().toISOString();setButtons();setStatus(timeUp?'Time up · session ended':'Session ended');
+  if(timeUp)ringAlarm();
+  if(S.elapsed>60000||S.events.length){const h=store.get('history',[]);h.push(compact(S));store.set('history',h.slice(-300))}
+  store.set('live',null);renderHist();showSummary(S);
+}
+function mainMap(s){let best='Unknown map',v=-1;for(const [m,ms] of Object.entries(s.maps||{}))if(ms>v&&m&&m!=='Unknown map'){best=m;v=ms}return best}
+function compact(s){const t=totals(s.events);return{id:s.id,started:s.started,ms:s.elapsed,map:mainMap(s),exp:t.exp,meso:t.meso,items:t.items}}
+function buckets(s,size){const out=[];const n=Math.max(1,Math.ceil(s.elapsed/size));for(let i=0;i<n;i++)out.push({exp:0,meso:0,items:0,from:i*size,to:Math.min(s.elapsed,(i+1)*size)});
+  for(const e of s.events){const b=out[Math.min(n-1,Math.floor(e.t/size))];if(e.type==='item')b.items++;else b[e.type]+=e.value}return out}
+function itemCounts(s){const m=new Map();for(const e of s.events)if(e.type==='item')m.set(e.name,(m.get(e.name)||0)+1);return [...m].sort((a,b)=>b[1]-a[1])}
+function summaryData(s){const t=totals(s.events),hr=s.elapsed/3600000||1e-9;return{t,hr,perHr:{exp:t.exp/hr,meso:t.meso/hr},per30:{exp:t.exp/hr/2,meso:t.meso/hr/2},b30:buckets(s,1800000),items:itemCounts(s),map:mainMap(s)}}
+function showSummary(s){
+  const d=summaryData(s);
+  const rows=d.b30.map(b=>`<tr><td>${hms(b.from)}–${hms(b.to)}</td><td class="n exp">${fmt(b.exp)}</td><td class="n meso">${fmt(b.meso)}</td><td class="n">${b.items}</td></tr>`).join('');
+  const maps=Object.entries(s.maps).filter(([m,ms])=>ms>5000&&(m!=='Unknown map'||Object.keys(s.maps).length===1)).map(([m,ms])=>`${esc(m)} (${hms(ms)})`).join(', ')||esc(d.map);
+  $('sumBody').innerHTML=`
+   <div class="stats">
+    <div class="stat"><div class="v">${hms(s.elapsed)}</div><div class="s">trained · ${esc(maps)}</div></div>
+    <div class="stat"><div class="v itm">${fmt(d.t.items)}</div><div class="s">items picked up</div></div>
+    <div class="stat"><div class="v exp">${fmt(d.t.exp)}</div><div class="s">EXP · ${fmt(d.perHr.exp)}/hr · ${fmt(d.per30.exp)}/30 min</div></div>
+    <div class="stat"><div class="v meso">${fmt(d.t.meso)}</div><div class="s">mesos · ${fmt(d.perHr.meso)}/hr · ${fmt(d.per30.meso)}/30 min</div></div>
+   </div>
+   ${s.bar&&s.bar.gained?`<p><small>EXP bar cross-check: bar rose ${fmt(s.bar.gained)} while messages read ${fmt(s.bar.msg||0)} over the same time (${Math.round(Math.min(s.bar.msg||0,s.bar.gained)/Math.max(s.bar.msg||1,s.bar.gained)*100)}% match)${s.bar.levels?`, ${s.bar.levels} level-up(s)`:''}.</small></p>`:''}
+   <h2 style="margin-top:14px">Every 30 minutes</h2>
+   <div class="scroll"><table><tr><th>Time</th><th class="n">EXP</th><th class="n">Mesos</th><th class="n">Items</th></tr>${rows}</table></div>
+   <h2 style="margin-top:14px">Kills by monster</h2>
+   ${(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false);return (a.list.length?`<table>${a.list.map(x=>`<tr><td>${esc(x.name)}</td><td class="n">${fmt(x.n)} kills</td><td class="n exp">${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%)</td><td class="n meso">~${fmt(x.meso)} mesos</td></tr>`).join('')}</table>`:'<small>No kills read.</small>')+(a.party?`<p><small>Party: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?` (≈${a.party.splitN} people splitting)`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from party bonus`:''}.</small></p>`:'')})()}
+   <h2 style="margin-top:14px">Drops picked up</h2>
+   ${d.items.length?`<table>${d.items.map(([n,c])=>`<tr><td>${esc(n)}</td><td class="n">×${c}</td></tr>`).join('')}</table>`:'<small>No item pickups were read.</small>'}
+   <p><a href="${mapUrl(d.map)}" target="_blank" rel="noopener">See ${esc(d.map)} drops and prices on meowdb ↗</a></p>`;
+  $('dlg').showModal();
+}
+function summaryText(s){
+  const d=summaryData(s);
+  let t=`# Maple Grind Meter session\n\nMap: ${d.map}\nStarted: ${new Date(s.started).toLocaleString()}\nTrained: ${hms(s.elapsed)}\n\n`+
+  `| | Total | Per hour | Per 30 min |\n|---|---:|---:|---:|\n| EXP | ${fmt(d.t.exp)} | ${fmt(d.perHr.exp)} | ${fmt(d.per30.exp)} |\n| Mesos | ${fmt(d.t.meso)} | ${fmt(d.perHr.meso)} | ${fmt(d.per30.meso)} |\n| Items | ${d.t.items} | ${fmt(d.t.items/d.hr)} | ${fmt(d.t.items/d.hr/2)} |\n\n`+
+  (s.bar&&s.bar.gained?`EXP bar cross-check: bar +${fmt(s.bar.gained)} vs messages +${fmt(s.bar.msg||0)} (${Math.round(Math.min(s.bar.msg||0,s.bar.gained)/Math.max(s.bar.msg||1,s.bar.gained)*100)}% match)\n\n`:'')+
+  `## Every 30 minutes\n\n| Time | EXP | Mesos | Items |\n|---|---:|---:|---:|\n`+d.b30.map(b=>`| ${hms(b.from)}–${hms(b.to)} | ${fmt(b.exp)} | ${fmt(b.meso)} | ${b.items} |`).join('\n')+
+  `\n\n## Kills by monster\n\n`+(()=>{const a=analyze(s.events,mobsFor(d.map),s.solo!==false);return a.list.map(x=>`- ${x.name}: ${fmt(x.n)} kills, ${fmt(x.exp)} EXP (${Math.round(x.expPct*100)}%), ~${fmt(x.meso)} mesos`).join('\n')+(a.party?`\n\nParty: share ≈ ${Math.round(a.party.share*100)}% of mob EXP${a.party.splitN?`, ≈${a.party.splitN} people splitting`:''}${a.party.bonusPct!=null?`, bonus ≈ ${Math.round(a.party.bonusPct*100)}% (${a.party.eligible||'?'} eligible), ${fmt(a.party.fromParty)} EXP from bonus`:''}`:'')})()+
+  `\n\n## Drops picked up\n\n`+(d.items.length?d.items.map(([n,c])=>`- ${n} ×${c}`).join('\n'):'- none read')+`\n`;
+  return t;
+}
+let lastSummary=null;const _show=showSummary;showSummary=s=>{lastSummary=s;_show(s)};
+$('bDlgClose').onclick=()=>{$('dlg').close();stopAlarm()};
+$('bSumCopy').onclick=()=>copy(summaryText(lastSummary),$('bSumCopy'));
+$('bSumDl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([summaryText(lastSummary)],{type:'text/markdown'}));a.download=`maple-session-${new Date(lastSummary.started).toISOString().slice(0,16).replace(/[:T]/g,'-')}.md`;a.click()};
+$('bSumShare').onclick=async()=>{const text=summaryText(lastSummary);if(navigator.share){try{await navigator.share({title:'MapleStory training session',text})}catch{}}else copy(text,$('bSumShare'))};
+async function copy(text,btn){try{await navigator.clipboard.writeText(text);const o=btn.textContent;btn.textContent='Copied';setTimeout(()=>btn.textContent=o,1200)}catch{}}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- history ranking ---------- */
+function mapStats(){
+  const m=new Map();for(const h of store.get('history',[])){if(h.ms<60000)continue;const a=m.get(h.map)||{map:h.map,ms:0,exp:0,meso:0,items:0,n:0};a.ms+=h.ms;a.exp+=h.exp;a.meso+=h.meso;a.items+=h.items;a.n++;m.set(h.map,a)}
+  const arr=[...m.values()].map(a=>({...a,eh:a.exp/(a.ms/3600000),mh:a.meso/(a.ms/3600000)}));
+  const by=$('rankBy').value;
+  if(by==='both'){const re=[...arr].sort((a,b)=>b.eh-a.eh),rm=[...arr].sort((a,b)=>b.mh-a.mh);for(const a of arr)a.score=re.indexOf(a)+rm.indexOf(a);arr.sort((a,b)=>a.score-b.score)}
+  else arr.sort((a,b)=>by==='exp'?b.eh-a.eh:b.mh-a.mh);
+  return arr;
+}
+function renderHist(){
+  const a=mapStats();
+  $('hist').innerHTML=a.length?`<tr><th>#</th><th>Map</th><th class="n">EXP/hr</th><th class="n">Mesos/hr</th><th class="n">Time</th><th class="n">Sessions</th></tr>`+
+   a.map((r,i)=>`<tr><td>${i+1}</td><td><a href="${mapUrl(r.map)}" target="_blank" rel="noopener">${esc(r.map)}</a></td><td class="n exp">${fmt(r.eh)}</td><td class="n meso">${fmt(r.mh)}</td><td class="n">${hms(r.ms)}</td><td class="n">${r.n}</td></tr>`).join('')
+   :'<tr><td><small>Finish a session of at least a minute and it shows up here, so you can compare maps.</small></td></tr>';
+}
+$('rankBy').onchange=renderHist;
+$('bHistClear').onclick=()=>{if($('bHistClear').dataset.sure){store.set('history',[]);renderHist();$('bHistClear').textContent='Clear history';delete $('bHistClear').dataset.sure}else{$('bHistClear').dataset.sure=1;$('bHistClear').textContent='Click again to clear'}};
+$('bHistCopy').onclick=()=>copy(mapStats().map((r,i)=>`${i+1}. ${r.map} — ${fmt(r.eh)} EXP/hr, ${fmt(r.mh)} mesos/hr (${hms(r.ms)}, ${r.n} sessions)`).join('\n'),$('bHistCopy'));
+
+/* ---------- map name ---------- */
+let mapVotes=[];
+const curMap=()=>($('mapName').value.trim()||'Unknown map');
+const mapUrl=n=>n&&n!=='Unknown map'?`https://meowdb.com/msclassic/maps?view=list&q=${encodeURIComponent(n)}`:'https://meowdb.com/msclassic/maps';
+function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip()}
+$('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl(curMap());showMobs();renderKills()};
+function onMapText(text){
+  if($('mapName').dataset.manual)return;
+  // keep the longest readable line; the street name usually sits above the map name
+  const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z0-9' :\-.]/g,'').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l)&&l.length>=4);
+  if(!lines.length)return;
+  const cand=lines.sort((a,b)=>b.length-a.length)[0];
+  mapVotes.push(cand);mapVotes=mapVotes.slice(-3);
+  if(mapVotes.filter(v=>v===cand).length>=2&&cand!==$('mapName').value)setMap(cand);
+  else if(!$('mapName').value)setMap(cand);
+}
+$('bMapSide').onclick=()=>{const w=Math.round(screen.availWidth*.33);window.open(mapUrl(curMap()),'meowdb',`popup,width=${w},height=${screen.availHeight},left=${screen.availWidth-w},top=0`)};
+
+/* ---------- pop-out overlay (always on top) ---------- */
+let pipWin=null;
+$('bPip').onclick=async()=>{
+  if(pipWin){pipWin.close();return}
+  const css=`body{margin:0;background:#14110dee;color:#f3ead8;font:13px/1.35 system-ui,sans-serif;padding:8px}
+   .r{display:flex;justify-content:space-between;gap:8px}.v{font-weight:700;font-variant-numeric:tabular-nums}.exp{color:#8fd14f}.meso{color:#f2c14e}.m{color:#b3a58c;font-size:11px}
+   button{font:inherit;background:#2c251c;color:#f3ead8;border:1px solid #3a3127;border-radius:6px;padding:4px 8px;cursor:pointer;flex:1}`;
+  if('documentPictureInPicture' in window){
+    pipWin=await documentPictureInPicture.requestWindow({width:250,height:170});
+  }else{
+    pipWin=window.open('','mgmpip','popup,width=260,height=190');if(!pipWin)return;
+  }
+  pipWin.document.head.innerHTML=`<title>Grind Meter</title><style>${css}</style>`;
+  pipWin.document.body.innerHTML=`<div id="p"></div><div class="r" style="margin-top:6px"><button id="pp">Pause</button><button id="pe">End</button></div>`;
+  pipWin.document.getElementById('pp').onclick=()=>$('bPause').onclick();
+  pipWin.document.getElementById('pe').onclick=()=>endSession();
+  pipWin.addEventListener('pagehide',()=>{pipWin=null});
+  renderPip();
+};
+function renderPip(){
+  if(!pipWin||pipWin.closed){pipWin=null;return}
+  const p=pipWin.document.getElementById('p');if(!p)return;
+  const t=elapsed(),tot=S?totals(S.events):{exp:0,meso:0,items:0},hr=t/3600000;
+  const left=S&&S.limitMin?Math.max(0,S.limitMin*60000-t):null;
+  p.innerHTML=`<div class="r"><span class="v">${hms(t)}</span><span class="m">${state==='run'?'running':state}${left!=null?' · '+hms(left)+' left':''}</span></div>
+   <div class="r"><span class="exp v">${fmt(tot.exp)} EXP</span><span class="exp">${hr>.003?fmt(tot.exp/hr):'–'}/hr</span></div>
+   <div class="r"><span class="meso v">${fmt(tot.meso)} mesos</span><span class="meso">${hr>.003?fmt(tot.meso/hr):'–'}/hr</span></div>
+   <div class="r"><span>${tot.items} items</span><span class="m">${esc(curMap())}</span></div>`;
+  const pp=pipWin.document.getElementById('pp');if(pp)pp.textContent=state==='paused'?'Resume':'Pause';
+}
+
+
+/* ---------- kills by monster + party estimate ----------
+   Party EXP in MapleStory Classic (formula published on meowdb, credit ohmi + azzybish):
+     Pool  = MobEXP x PartyDamage / MobMaxHP
+     Share = round(Pool x (0.8 x YourLevel / EligibleLevels + 0.2 x YourDamage / PartyDamage))
+     Bonus = min(0.30, 0.10 x (EligibleMembers-1)) + 0.05 x (MembersWhoDamagedIt-1)
+   So solo you always get the mob's full EXP. In a party your base share is roughly MobEXP / N
+   when members are similar in level and damage, and the bonus % tells us how many are eligible. */
+const mobKey=m=>'mobs:'+m.toLowerCase();
+function parseMobTable(text){
+  const out=[];const t=text.replace(/\d+m respawn|\d+s respawn|respawn/gi,' ');
+  const re=/([A-Za-z][A-Za-z' .\-]*?[A-Za-z])\s+(\d{1,3})\s+([\d,]+)\s+([\d,]+)(?:\s+\d+%)?/g;let m;
+  while((m=re.exec(t))){const name=m[1].trim();if(/^(monster|lv|hp|exp|share)$/i.test(name))continue;out.push({name,lv:+m[2],hp:num(m[3]),exp:num(m[4])})}
+  return out;
+}
+function mobsFor(map){const m=store.get(mobKey(map),[]);if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+$('mobPaste').oninput=()=>{const mobs=parseMobTable($('mobPaste').value);store.set(mobKey(curMap()),mobs);showMobs();renderKills()};
+function showMobs(){const mobs=mobsFor(curMap());$('mobParsed').innerHTML=mobs.length?'<small>Saved for '+esc(curMap())+': '+mobs.map(m=>esc(m.name)+' (Lv '+m.lv+', '+fmt(m.exp)+' EXP)').join(', ')+'</small>':'<small>No monsters saved for this map yet.</small>'}
+$('solo').checked=store.get('solo',true);$('solo').onchange=()=>{store.set('solo',$('solo').checked);if(S)S.solo=$('solo').checked;renderKills()};
+const BONUS=[];for(let E=1;E<=6;E++)for(let H=1;H<=E;H++)BONUS.push({E,H,b:Math.min(.3,.1*(E-1))+.05*(H-1)});
+function analyze(ev,mobs,solo){
+  const exps=ev.filter(e=>e.type==='exp'),base=e=>e.base??e.value;
+  const groups=new Map();for(const e of exps){const v=base(e);const g=groups.get(v)||{v,n:0,total:0};g.n++;g.total+=e.value;groups.set(v,g)}
+  const G=[...groups.values()];
+  // fit one share ratio r (1 when solo) so that each EXP amount ≈ r x some mob's EXP
+  let r=1;
+  if(!solo&&mobs.length&&G.length){
+    let best=1e9;for(let x=0.08;x<=1.0001;x+=0.0025){let err=0;for(const g of G){let m=1e9;for(const mb of mobs){const d=Math.abs(g.v-x*mb.exp)/Math.max(1,g.v);if(d<m)m=d}err+=Math.min(m,.5)*g.n}if(err<best-1e-9){best=err;r=x}}
+  }
+  const rows=new Map();const unknown={name:'Other / unmatched',n:0,exp:0,lv:0,each:0};
+  for(const g of G){
+    let pick=null,pd=1e9;for(const mb of mobs){const d=Math.abs(g.v-r*mb.exp)/Math.max(1,g.v);if(d<pd){pd=d;pick=mb}}
+    if(pick&&pd<(solo?0.06:0.2)){const row=rows.get(pick.name)||{name:pick.name,lv:pick.lv,each:pick.exp,n:0,exp:0};row.n+=g.n;row.exp+=g.total;rows.set(pick.name,row)}
+    else if(mobs.length){unknown.n+=g.n;unknown.exp+=g.total}
+    else rows.set('v'+g.v,{name:fmt(g.v)+' EXP each',lv:0,each:g.v,n:g.n,exp:g.total});
+  }
+  const list=[...rows.values()];if(unknown.n)list.push(unknown);
+  const totExp=list.reduce((a,b)=>a+b.exp,0)||1,totMeso=totals(ev).meso;
+  // mesos can't be tied to a monster from the pickup text; split them by kills x level (meso drops grow with level)
+  const w=list.reduce((a,b)=>a+b.n*(b.lv||1),0)||1;
+  for(const x of list){x.expPct=x.exp/totExp;x.meso=totMeso*(x.n*(x.lv||1))/w}
+  list.sort((a,b)=>b.exp-a.exp);
+  // party size estimates
+  const bon=exps.filter(e=>e.bonus>0).map(e=>e.bonus/base(e));
+  let party=null;
+  if(!solo){
+    const avgB=bon.length?bon.reduce((a,b)=>a+b,0)/bon.length:null;
+    const fits=avgB==null?[]:BONUS.filter(c=>Math.abs(c.b-avgB)<.026);
+    const Es=[...new Set(fits.map(f=>f.E))];
+    party={share:r,splitN:mobs.length?Math.max(1,Math.round(1/r*10)/10):null,bonusPct:avgB,eligible:Es.length?(Es.length>1?Math.min(...Es)+'–'+Math.max(...Es):String(Es[0])):null,
+      fromParty:exps.reduce((a,e)=>a+(e.bonus||0),0)};
+  }
+  return{list,party};
+}
+function renderKills(){
+  const s=S;const ev=s?s.events:[];const solo=$('solo').checked;
+  const {list,party}=analyze(ev,mobsFor(curMap()),solo);
+  $('kills').innerHTML=list.length?'<tr><th>Monster</th><th class="n">Kills</th><th class="n">EXP</th><th class="n">% EXP</th><th class="n">~Mesos</th></tr>'+list.map(x=>`<tr><td>${esc(x.name)}${x.lv?` <small>Lv ${x.lv}</small>`:''}</td><td class="n">${fmt(x.n)}</td><td class="n exp">${fmt(x.exp)}</td><td class="n">${Math.round(x.expPct*100)}%</td><td class="n meso">${fmt(x.meso)}</td></tr>`).join(''):'<tr><td><small>Kills appear here as EXP comes in.</small></td></tr>';
+  $('party').innerHTML=party?[
+    party.splitN?`<span class="pill">Your share ≈ ${Math.round(party.share*100)}% of each mob's EXP → about ${party.splitN} people splitting (if similar level and damage)</span>`:'<span class="pill">Paste this map\'s monsters below to estimate the split</span>',
+    party.bonusPct!=null?`<span class="pill">Party bonus ≈ ${Math.round(party.bonusPct*100)}% → ${party.eligible||'?'} eligible members · ${fmt(party.fromParty)} EXP from the bonus</span>`:'<span class="pill">No party bonus read yet</span>',
+    '<span class="pill">Mesos are not split: each pickup goes to whoever loots it</span>'].join(''):'';
+}
+
+/* ---------- EXP bar cross-check ----------
+   The bar shows your current EXP (e.g. "EXP 123,456 / 300,000 [41.15%]" or "123456[41.15%]").
+   Every 2 s it is read; a new value is only trusted after two matching reads. The rise in the bar
+   is the true EXP gained (a drop means a level-up: the rest of the old level is added). */
+let barPend=null;
+function parseBar(text){
+  const t=text.replace(/\s+/g,' ');
+  const pm=/(\d{1,3}[.,]\d{1,3})\s*%?/.exec(t.replace(/\d[\d,]{3,}/g,' '));   // the decimal number is the percent
+  const pct=pm?parseFloat(pm[1].replace(',','.')):null;
+  const nums=(t.replace(/\d{1,3}[.,]\d{1,3}\s*%?\s*[)\]]/,' ').match(/\d[\d,]{0,15}/g)||[]).map(num);
+  if(!nums.length)return null;
+  return{cur:nums[0],need:nums[1]>nums[0]?nums[1]:null,pct};
+}
+function onBarText(text){
+  if(!S||state!=='run')return;
+  const r=parseBar(text);if(!r){return}
+  const selfCheck=r.need&&r.pct!=null&&Math.abs(r.cur/r.need*100-r.pct)<0.06; // "cur / need [pct%]" agree with each other
+  if(!selfCheck){if(!barPend||barPend.cur!==r.cur){barPend=r;return}} // otherwise need two identical reads in a row
+  const b=S.bar||(S.bar={gained:0,msg:0,last:null,need:null,levels:0});
+  if(b.last==null){b.last=r.cur;b.need=r.need;renderBar();return}
+  if(r.cur>b.last){const d=r.cur-b.last;if(!b.need||d<b.need)b.gained+=d;b.last=r.cur}
+  else if(r.cur<b.last){ // level up (or a death); count it as a level-up only if the % also wrapped
+    if(b.need&&(r.pct==null||r.pct<30)){b.gained+=(b.need-b.last)+r.cur;b.levels++}
+    b.last=r.cur}
+  if(r.need)b.need=r.need;
+  renderBar();
+}
+function renderBar(){
+  const b=S&&S.bar;if(!b||b.last==null){$('barInfo').textContent=$('useBar').checked?'EXP bar not read yet':'off';return}
+  const msg=b.msg||0;
+  const match=b.gained>0?Math.round(Math.min(msg,b.gained)/Math.max(msg,b.gained)*100):null;
+  $('barInfo').innerHTML=`bar <b class="exp">+${fmt(b.gained)}</b> vs messages +${fmt(msg)}${match!=null?` · <b style="color:${match>=97?'var(--exp)':match>=85?'var(--meso)':'var(--warn)'}">${match}% match</b>`:''}${b.levels?` · ${b.levels} level-up${b.levels>1?'s':''}`:''}`;
+}
+$('useBar').checked=store.get('useBar',true);$('useBar').onchange=()=>{store.set('useBar',$('useBar').checked);$('rBar').style.display=$('useBar').checked?'':'none';renderBar()};
+/* ---------- restore an interrupted session ---------- */
+const live=store.get('live',null);
+if(live&&live.S){S=live.S;state='paused';setStatus('Restored paused session · share screen to resume');setButtons();onTick()}
+showMobs();renderKills();renderHist();setButtons();
+window.MGM={parseLine,analyze,parseMobTable,ingest,get S(){return S},get state(){return state},record,endSession,summaryText:()=>summaryText(S)};
+}
+</script>
+</body>
+</html>
