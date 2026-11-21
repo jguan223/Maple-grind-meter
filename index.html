@@ -81,16 +81,16 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
     <div class="card">
       <div id="stage">
         <video id="vid" muted playsinline></video>
-        <div class="hint" id="hint">Click <b>Share game screen</b> and pick the MapleStory window (works windowed or fullscreen; in fullscreen pick the whole screen).<br>Then drag the boxes into place (drag the middle to move, any corner or edge to resize): the green box over the EXP / meso pickup messages (bottom right)<br>the blue box over the minimap (top left)<br>and the pink box over the numbers on the EXP bar.</div>
+        <div class="hint" id="hint">Click <b>Share game screen</b> and pick the MapleStory window (works windowed or fullscreen; in fullscreen pick the whole screen).<br>Then drag the boxes into place (drag the middle to move, any corner or edge to resize): the green box over the EXP / meso pickup messages (bottom right)<br>the blue box over the two name lines at the top of the minimap<br>and the pink box over the numbers on the EXP bar.</div>
         <div class="region" id="rGain" hidden><span>EXP / meso / item messages</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
-        <div class="region" id="rMap" hidden><span>Minimap (recognises the map)</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
+        <div class="region" id="rMap" hidden><span>Minimap title: area + map name</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
         <div class="region" id="rBar" hidden><span>EXP bar numbers</span><i data-h="nw"></i><i data-h="n"></i><i data-h="ne"></i><i data-h="e"></i><i data-h="se"></i><i data-h="s"></i><i data-h="sw"></i><i data-h="w"></i></div>
       </div>
       <div class="row" style="margin-top:8px">
         <label>Scan speed
           <select id="scanMs"><option value="150">Fast (≈6/s)</option><option value="250" selected>Normal (≈4/s)</option><option value="400">Light (≈2.5/s)</option><option value="700">Lightest (≈1.5/s)</option></select>
         </label>
-        <label>Text brightness cut <input id="thr" type="number" min="60" max="250" value="140" style="width:70px"></label>
+        <label>Message text brightness cut (0 = auto) <input id="thr" type="number" min="0" max="250" value="140" style="width:70px"></label>
         <button id="bReset">Reset boxes</button>
         <label><input type="checkbox" id="newestTop"> Newest message is on top</label>
       </div>
@@ -110,7 +110,8 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
         <a id="mapLink" href="https://meowdb.com/msclassic/maps" target="_blank" rel="noopener">Mobs, drops and prices on meowdb ↗</a>
         <button id="bMapSide">Open meowdb beside the game</button>
       </div>
-      <small id="mapLearn">The blue minimap box is checked every 4 seconds. On a new map, type its name once and it is remembered from then on.</small>
+      <small id="mapLearn">The map name is read from the minimap title every 4 seconds. If it can't be read, type it once; the minimap is remembered from then on.</small>
+      <div id="mapPic" style="margin-top:8px"></div>
     </div>
 
     <div class="card" style="margin-top:14px">
@@ -136,7 +137,7 @@ footer{padding:10px 16px 24px;color:var(--mute);font-size:12px}
         <div class="stat"><div class="v exp" id="sExp">0</div><div class="s">EXP · <span id="sExpHr">0</span>/hr</div></div>
         <div class="stat"><div class="v meso" id="sMeso">0</div><div class="s">mesos · <span id="sMesoHr">0</span>/hr</div></div>
         <div class="stat"><div class="v itm" id="sItems">0</div><div class="s">items picked up</div></div>
-        <div class="stat" style="grid-column:1/-1"><div class="s"><label style="color:var(--ink)"><input type="checkbox" id="useBar" checked> Cross-check with the EXP bar</label> · <span id="barInfo">EXP bar not read yet</span></div></div>
+        <div class="stat" style="grid-column:1/-1"><div class="s"><label style="color:var(--ink)"><input type="checkbox" id="useBar" checked> Cross-check with the EXP bar</label> (EXP totals use the bar when it can be read) · <span id="barInfo">EXP bar not read yet</span></div></div>
         <div class="stat"><div class="v" id="sLast5" style="font-size:18px">–</div><div class="s">last 5 min pace (EXP · mesos /hr)</div></div>
       </div>
     </div>
@@ -241,7 +242,7 @@ function parseLine(raw){
 
 
 /* ---------- regions ---------- */
-const DEFR={gain:{x:.79,y:.64,w:.21,h:.30},map:{x:0,y:0,w:.145,h:.17},bar:{x:.525,y:.952,w:.115,h:.042}};
+const DEFR={gain:{x:.79,y:.64,w:.21,h:.30},map:{x:.035,y:.03,w:.09,h:.05},bar:{x:.528,y:.952,w:.09,h:.03}};
 let R=store.get('regions2',structuredClone(DEFR));if(!R.bar)R.bar=structuredClone(DEFR.bar);
 /* Fullscreen vs windowed: boxes are remembered per capture size. When the size changes to one we
    have not seen, the message box stays pinned to the bottom-right corner and the map box to the
@@ -320,7 +321,14 @@ function cropTo(src,r,scale,thr){
   work.width=Math.max(8,Math.round(sw*scale));work.height=Math.max(8,Math.round(sh*scale));
   wctx.imageSmoothingEnabled=true;wctx.drawImage(src,sx,sy,sw,sh,0,0,work.width,work.height);
   const img=wctx.getImageData(0,0,work.width,work.height),d=img.data;
-  for(let i=0;i<d.length;i+=4){const l=.299*d[i]+.587*d[i+1]+.114*d[i+2];const o=l>thr?0:255;d[i]=d[i+1]=d[i+2]=o}
+  const L=new Uint8Array(d.length/4);for(let i=0,j=0;i<d.length;i+=4,j++)L[j]=.299*d[i]+.587*d[i+1]+.114*d[i+2];
+  let bright=true;
+  if(!(thr>0)){ // automatic (Otsu): pick the cut that best splits text from background, text = the smaller part
+    const h=new Uint32Array(256);for(const v of L)h[v]++;let sum=0;for(let i=0;i<256;i++)sum+=i*h[i];
+    let sB=0,wB=0,best=0;thr=128;for(let t=0;t<256;t++){wB+=h[t];if(!wB)continue;const wF=L.length-wB;if(!wF)break;sB+=t*h[t];const v=wB*wF*(sB/wB-(sum-sB)/wF)**2;if(v>best){best=v;thr=t}}
+    let n=0;for(const v of L)if(v>thr)n++;bright=n<L.length/2;
+  }
+  for(let j=0;j<L.length;j++){const on=bright?L[j]>thr:L[j]<=thr;d[j*4]=d[j*4+1]=d[j*4+2]=on?0:255}
   wctx.putImageData(img,0,0);return work;
 }
 function signature(src,r){
@@ -336,7 +344,7 @@ const tickW=new Worker(URL.createObjectURL(new Blob([`let t=null;onmessage=e=>{c
 let looping=false;
 function startLoop(){looping=true;tickW.postMessage(+$('scanMs').value)}
 $('scanMs').onchange=()=>{store.set('scanMs',$('scanMs').value);if(looping)startLoop()};
-$('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr',140);$('thr').onchange=()=>store.set('thr',$('thr').value);
+$('scanMs').value=store.get('scanMs','250');$('newestTop').checked=store.get('newestTop',false);$('newestTop').onchange=()=>store.set('newestTop',$('newestTop').checked);$('thr').value=store.get('thr2',140);$('thr').onchange=()=>store.set('thr2',$('thr').value);
 tickW.onmessage=()=>{onTick();scan()};
 
 async function scan(){
@@ -358,13 +366,17 @@ async function scan(){
         ingest(data.text);
       }
     }
-    if(scanning&&$('useBar').checked&&performance.now()-lastBarAt>2000){
+    if(scanning&&$('useBar').checked&&performance.now()-lastBarAt>3000){
       lastBarAt=performance.now();
-      const c=cropTo(src,R.bar,4,+$('thr').value);
+      const c=cropTo(src,R.bar,6,0);
+      await ocr.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});
       const {data}=await ocr.recognize(c);
+      await ocr.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+()[],.'-:/% "});
       onBarText(data.text);
     }
-    if(wantMap){lastMapAt=performance.now();onMinimap(signature(src,R.map),src)}
+    if(wantMap){lastMapAt=performance.now();const sig=signature(src,R.map);
+      const c=cropTo(src,R.map,4,0);const {data}=await ocr.recognize(c);
+      if(!(await onMapTitle(data.text)))onMinimap(sig);else lastMini=sig}
     if(src.close)src.close();
   }catch(e){console.warn(e)}finally{ocrBusy=false}
 }
@@ -444,6 +456,7 @@ function onTick(){
   }else lastTickMap=0;
   $('clock').textContent=hms(t);
   const tot=totals(S.events),hr=t/3600000;
+  tot.exp=expTotal(S);
   $('sExp').textContent=fmt(tot.exp);$('sMeso').textContent=fmt(tot.meso);$('sItems').textContent=fmt(tot.items);
   $('sExpHr').textContent=hr>0.003?fmt(tot.exp/hr):'–';$('sMesoHr').textContent=hr>0.003?fmt(tot.meso/hr):'–';
   const w=S.events.filter(e=>e.t>t-300000),win=Math.min(t,300000)/3600000,l=totals(w);
@@ -454,6 +467,8 @@ function onTick(){
   if(!onTick.k||Date.now()-onTick.k>2000){onTick.k=Date.now();renderKills();renderBar()}
   renderPip();
 }
+// EXP total: when the EXP bar is being read, its rise is exact; message EXP fills in any time the bar wasn't tracked
+function expTotal(s){const t=totals(s.events).exp;const b=s.bar;return b&&b.gained>0&&s.barTotals!==false?b.gained+Math.max(0,t-(b.msg||0)):t}
 function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items+=e.qty||1}return{exp,meso,items}}
 
 /* ---------- alarm ---------- */
@@ -476,11 +491,11 @@ function endSession(timeUp){
   store.set('live',null);renderHist();showSummary(S);
 }
 function mainMap(s){let best='Unknown map',v=-1;for(const [m,ms] of Object.entries(s.maps||{}))if(ms>v&&m&&m!=='Unknown map'){best=m;v=ms}return best}
-function compact(s){const t=totals(s.events);return{id:s.id,started:s.started,ms:s.elapsed,map:mainMap(s),exp:t.exp,meso:t.meso,items:t.items}}
+function compact(s){const t=totals(s.events);t.exp=expTotal(s);return{id:s.id,started:s.started,ms:s.elapsed,map:mainMap(s),exp:t.exp,meso:t.meso,items:t.items}}
 function buckets(s,size){const out=[];const n=Math.max(1,Math.ceil(s.elapsed/size));for(let i=0;i<n;i++)out.push({exp:0,meso:0,items:0,from:i*size,to:Math.min(s.elapsed,(i+1)*size)});
   for(const e of s.events){const b=out[Math.min(n-1,Math.floor(e.t/size))];if(e.type==='item')b.items++;else b[e.type]+=e.value}return out}
 function itemCounts(s){const m=new Map();for(const e of s.events)if(e.type==='item')m.set(e.name,(m.get(e.name)||0)+(e.qty||1));return [...m].sort((a,b)=>b[1]-a[1])}
-function summaryData(s){const t=totals(s.events),hr=s.elapsed/3600000||1e-9;return{t,hr,perHr:{exp:t.exp/hr,meso:t.meso/hr},per30:{exp:t.exp/hr/2,meso:t.meso/hr/2},b30:buckets(s,1800000),items:itemCounts(s),map:mainMap(s)}}
+function summaryData(s){const t=totals(s.events);t.exp=expTotal(s);const _u=0,hr=s.elapsed/3600000||1e-9;return{t,hr,perHr:{exp:t.exp/hr,meso:t.meso/hr},per30:{exp:t.exp/hr/2,meso:t.meso/hr/2},b30:buckets(s,1800000),items:itemCounts(s),map:mainMap(s)}}
 function showSummary(s){
   const d=summaryData(s);
   const rows=d.b30.map(b=>`<tr><td>${hms(b.from)}–${hms(b.to)}</td><td class="n exp">${fmt(b.exp)}</td><td class="n meso">${fmt(b.meso)}</td><td class="n">${b.items}</td></tr>`).join('');
@@ -543,11 +558,42 @@ $('bHistCopy').onclick=()=>copy(mapStats().map((r,i)=>`${i+1}. ${r.map} — ${fm
 let mapVotes=[];
 const curMap=()=>($('mapName').value.trim()||'Unknown map');
 const mapUrl=n=>n&&n!=='Unknown map'?`https://meowdb.com/msclassic/maps?view=list&q=${encodeURIComponent(n)}`:'https://meowdb.com/msclassic/maps';
-function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();loadAutoMobs()}
+function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();showMapPic();loadAutoMobs()}
+function showMapPic(){const id=mapIds[curMap()];$('mapPic').innerHTML=id?`<img src="${MSIO}/map/${id}/minimap" alt="Minimap of ${esc(curMap())}" style="max-width:100%;border-radius:6px;border:1px solid var(--line)">`:''}
 $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl(curMap());showMobs();renderKills()};
 /* The map name isn't always shown, so maps are recognised by their minimap picture instead.
    The first time you're on a map, type (or pick) its name; the minimap is remembered and the
    map is picked automatically every time after that. */
+
+/* Read the minimap title: line 1 is the area ("Victoria Road"), line 2 the map ("Henesys Market").
+   The OCR text is matched to the closest real map name so small misreads still find the right map. */
+const lev=(a,b)=>{a=a.toLowerCase();b=b.toLowerCase();const d=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){let p=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const t=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,p+(a[i-1]===b[j-1]?0:1));p=t}}return d[b.length]};
+const nameCache=new Map();let titleVotes=[];
+async function canonMap(street,map){
+  const key=street+'|'+map;if(nameCache.has(key))return nameCache.get(key);
+  const words=map.split(' ').filter(w=>w.length>=4).sort((a,b)=>b.length-a.length);
+  let best=null,bs=1;
+  for(const q of [map,...words.slice(0,2)]){
+    try{const list=await (await fetch(MSIO+'/map?count=40&searchFor='+encodeURIComponent(q))).json();
+      for(const m of list){const n=m.name.trim();let sc=lev(n,map)/Math.max(n.length,map.length);if(street&&m.streetName)sc+=0.3*lev(m.streetName.trim(),street)/Math.max(m.streetName.length,street.length);
+        if(sc<bs){bs=sc;best={name:n,street:(m.streetName||'').trim(),id:m.id}}}}catch{return null}
+    if(bs<0.12)break;
+  }
+  const out=bs<0.4?best:null;nameCache.set(key,out);return out;
+}
+async function onMapTitle(text){
+  const lines=text.split('\n').map(l=>l.replace(/[^A-Za-z' :\-.]/g,' ').replace(/\s+/g,' ').trim()).filter(l=>/[A-Za-z]{3}/.test(l));
+  if(!lines.length)return false;
+  const map=lines.length>=2?lines[1]:lines[0],street=lines.length>=2?lines[0]:'';
+  const hit=await canonMap(street,map);
+  const name=hit?hit.name:(map.length>=5?map:null);if(!name)return false;
+  titleVotes.push(name);titleVotes=titleVotes.slice(-3);
+  if(Date.now()-(manualAt||0)<60000)return true;
+  if((titleVotes.filter(v=>v===name).length>=2||!$('mapName').value)&&name!==$('mapName').value){
+    if(hit)mapIds[name]=hit.id;setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
+  return true;
+}
+let manualAt=0;const mapIds=store.get('mapIds',{});
 let lastMini=null,miniMiss=0;
 const minis=store.get('minimaps',[]); // [{name,sig:[...]}]
 function onMinimap(sig){
@@ -562,7 +608,7 @@ function learnMap(){
   if(!ex){minis.push({name:n,sig});store.set('minimaps',minis.slice(-400))}
   $('mapLearn').textContent='Minimap remembered for '+n;
 }
-$('mapName').onchange=()=>{learnMap();loadAutoMobs()};
+$('mapName').onchange=()=>{manualAt=Date.now();learnMap();loadAutoMobs()};
 // name suggestions (map names match the original game's, from maplestory.io)
 let sugT=0;$('mapName').addEventListener('input',()=>{clearTimeout(sugT);const q=$('mapName').value.trim();if(q.length<3)return;
   sugT=setTimeout(async()=>{try{const r=await fetch('https://maplestory.io/api/GMS/83/map?count=12&searchFor='+encodeURIComponent(q));const j=await r.json();
@@ -591,7 +637,7 @@ $('bPip').onclick=async()=>{
 function renderPip(){
   if(!pipWin||pipWin.closed){pipWin=null;return}
   const p=pipWin.document.getElementById('p');if(!p)return;
-  const t=elapsed(),tot=S?totals(S.events):{exp:0,meso:0,items:0},hr=t/3600000;
+  const t=elapsed(),tot=S?{...totals(S.events),exp:expTotal(S)}:{exp:0,meso:0,items:0},hr=t/3600000;
   const left=S&&S.limitMin?Math.max(0,S.limitMin*60000-t):null;
   p.innerHTML=`<div class="r"><span class="v">${hms(t)}</span><span class="m">${state==='run'?'running':state}${left!=null?' · '+hms(left)+' left':''}</span></div>
    <div class="r"><span class="exp v">${fmt(tot.exp)} EXP</span><span class="exp">${hr>.003?fmt(tot.exp/hr):'–'}/hr</span></div>
@@ -667,10 +713,13 @@ async function mobId(name){
 }
 const mobImg=name=>{const id=imgIds[name];if(id===undefined){mobId(name);return ''}return id?`<img class="mobimg" loading="lazy" src="${MSIO}/mob/${id}/render/stand" alt="">`:''};
 async function loadAutoMobs(){
-  const map=curMap();if(map==='Unknown map'||store.get(mobKey(map),[]).length||store.get('auto'+mobKey(map),null))return;
+  const map=curMap();if(map==='Unknown map')return;
+  if(!mapIds[map]){try{const l=await (await fetch(MSIO+'/map?count=20&searchFor='+encodeURIComponent(map))).json();const h=l.find(m=>m.name.trim().toLowerCase()===map.toLowerCase());if(h){mapIds[map]=h.id;store.set('mapIds',mapIds);showMapPic()}}catch{}}
+  if(store.get(mobKey(map),[]).length||store.get('auto'+mobKey(map),null))return;
   try{
     const list=await (await fetch(MSIO+'/map?count=20&searchFor='+encodeURIComponent(map))).json();
     const hit=list.find(m=>m.name.trim().toLowerCase()===map.toLowerCase());if(!hit){store.set('auto'+mobKey(map),[]);return}
+    mapIds[map]=hit.id;store.set('mapIds',mapIds);showMapPic();
     const md=await (await fetch(MSIO+'/map/'+hit.id)).json();
     const ids=[...new Set((md.mobs||[]).map(m=>m.id))].slice(0,12);
     const mobs=[];for(const id of ids){const m=await (await fetch(MSIO+'/mob/'+id)).json();mobs.push({name:m.name,lv:m.meta.level,hp:m.meta.maxHP,exp:m.meta.exp});imgIds[m.name]=id}
@@ -697,14 +746,22 @@ function renderKills(){
    is the true EXP gained (a drop means a level-up: the rest of the old level is added). */
 let barPend=null;
 function parseBar(text){
-  const t=text.replace(/\s+/g,' ');
-  const pm=/(\d{1,3}[.,]\d{1,3})\s*%?/.exec(t.replace(/\d[\d,]{3,}/g,' '));   // the decimal number is the percent
-  const pct=pm?parseFloat(pm[1].replace(',','.')):null;
-  const nums=(t.replace(/\d{1,3}[.,]\d{1,3}\s*%?\s*[)\]]/,' ').match(/\d[\d,]{0,15}/g)||[]).map(num);
-  if(!nums.length)return null;
-  return{cur:nums[0],need:nums[1]>nums[0]?nums[1]:null,pct};
+  // e.g. "EXP 88,666 [4.78%]". OCR may give "s8.66614.78%)": s for 8, comma as dot, "[" as 1.
+  let t=text.replace(/\s+/g,'').replace(/^.*?EXP/i,'').replace(/[sS]/g,'8').replace(/[oO]/g,'0').replace(/[lI|]/g,'1');
+  let need=null;const sl=/^([\d,.]+)\/([\d,.]+)/.exec(t);if(sl){need=num(sl[2]);t=t.slice(sl[0].length)}
+  const pm=/(\d{1,2}[.,]\d{2})%/.exec(t)||/(\d{1,2}[.,]\d{2})[%)\]\d]?\D*$/.exec(t);if(!pm&&!sl)return null;
+  let head=sl?sl[1]:t.slice(0,pm?pm.index:t.length);
+  const bracket=/[\[(]$/.test(head);head=head.replace(/[^\d.,]/g,'');
+  const g=head.split(/[.,]/);let ps=pm?pm[1].replace(',','.'):null;
+  if(g.length>1){const last=g[g.length-1];
+    if(last.length===4)g[g.length-1]=last.slice(0,3);                  // "[" glued onto the number
+    else if(last.length===3&&!bracket&&ps&&/^1\d/.test(ps)&&ps.length>4)ps=ps.slice(1); // "[" glued onto the percent
+    if(!g.slice(1).every(x=>x.length===3))return null}
+  const cur=num(g.join(''));if(!g.join(''))return null;
+  const pct=ps?parseFloat(ps):null;if(pct!=null&&pct>=100)return null;
+  return{cur,need,pct};
 }
-function onBarText(text){
+function onBarText(text){MGM.lastBar=text;
   if(!S||state!=='run')return;
   const r=parseBar(text);if(!r){return}
   const needEst=r.need||(S.bar&&S.bar.need)||null;
@@ -730,7 +787,7 @@ $('useBar').checked=store.get('useBar',true);$('useBar').onchange=()=>{store.set
 /* ---------- save settings for this PC ----------
    Everything is kept in this browser on this PC. The button takes a named snapshot that is loaded
    every time the page opens here; the settings code moves it to another PC or browser. */
-const SKEYS=['regions2','profiles2','thr','scanMs','newestTop','useBar','pExp','pMeso','pItem','solo'],XKEYS=['minimaps','mobImgIds'];
+const SKEYS=['regions2','profiles2','thr2','scanMs','newestTop','useBar','pExp','pMeso','pItem','solo'],XKEYS=['minimaps','mobImgIds'];
 function snapshot(all){const o={};for(const k of all?SKEYS.concat(XKEYS):SKEYS){const v=store.get(k,undefined);if(v!==undefined)o[k]=v}return o}
 function applySnap(o){for(const k of SKEYS.concat(XKEYS))if(k in o)store.set(k,o[k])}
 function showSaved(){const sv=store.get('pcSaved',null);$('savedInfo').textContent=sv?'Saved for this PC on '+new Date(sv.at).toLocaleString()+'. Loads automatically here.':'Not saved yet: boxes are kept, but press Save to lock them in for this PC.'}

@@ -17,7 +17,8 @@ A browser overlay for MapleStory Classic that measures EXP and mesos per hour wh
 
 ## Tips
 - Open **Calibration** to see what the reader sees. Raise or lower *Text brightness cut* until the messages read cleanly.
-- The map is recognised from the minimap: type a new map's name once and it is remembered. Monsters appear with pictures and a kill counter.
+- The map name is read from the two lines at the top of the minimap (area + map). The map's picture and its monsters load automatically, with a kill counter for each.
+- The EXP bar (e.g. `EXP 88,666 [4.78%]`) is read every 3 seconds; when it can be read, EXP totals come from the bar, which is exact.
 - Drag the middle of a box to move it, any corner or edge to resize. Press **Save settings for this PC** to keep your layout on that PC; **Copy settings code** moves it to another PC.
 - Paste a map's monster table (Monster · Lv · HP · EXP) from its NiaMeowDB page once to get kills per monster by name.
 
