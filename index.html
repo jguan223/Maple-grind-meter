@@ -379,7 +379,7 @@ async function scanMsgs(){
   let id=0;
   try{
     const now=performance.now();const src=await grabFrame();if(!src)return;
-    adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);
+    adaptTo(src.videoWidth||src.width,src.videoHeight||src.height);noteBlack(src);
     const sig=signature(src,R.gain);const diff=sigDiff(sig,lastSig);
     // an unchanged picture (the game or the screen share froze) says nothing new, and reading it again later
     // would look like lines that stopped fading, so it is skipped
@@ -404,15 +404,16 @@ async function scanMsgs(){
 }
 async function scanSide(){
   const w=ocr2||ocr;if(side2Busy||!w||!stream)return;
-  const now=performance.now(),wantMap=now-lastMapAt>4000,wantBar=state==='run'&&$('useBar').checked&&now-lastBarAt>BAR_MS;
+  const now=performance.now(),wantMap=now-lastMapAt>(mapSure&&!mapDoubt?60000:mapTries<12?4000:15000),wantBar=state==='run'&&$('useBar').checked&&now-lastBarAt>BAR_MS;
   if(!wantMap&&!wantBar)return;
   if(!ocr2&&ocrBusy)return;
   side2Busy=true;
   try{
     const src=await grabFrame();if(!src)return;
+    if(state!=='run')noteBlack(src);
     let cb=null,cm=null,sig=null;
     if(wantBar){lastBarAt=now;cb=toPgm(cropTo(src,R.bar,6,0))}
-    if(wantMap){lastMapAt=now;sig=signature(src,R.map);cm=toPgm(cropTo(src,R.map,4,0))}
+    if(wantMap){lastMapAt=now;mapTries++;sig=signature(src,R.map);cm=toPgm(cropTo(src,R.map,4,0))}
     if(src.close)src.close();
     if(cb){await w.setParameters({tessedit_pageseg_mode:'7',tessedit_char_whitelist:'EXP0123456789,.[]%() '});const {data}=await w.recognize(cb);onBarText(data.text)}
     if(cm){await w.setParameters({tessedit_pageseg_mode:'6',tessedit_char_whitelist:"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'-:.<>()& "});const {data}=await w.recognize(cm);await onMapTitle(data.text);lastMini=sig}
@@ -544,7 +545,9 @@ function msgCrop(src,r,scale,cut){
   const d1=mctx.getImageData(0,0,sw,sh).data,L1=new Float32Array(sw*sh);for(let i=0,j=0;j<L1.length;i+=4,j++)L1[j]=.299*d1[i]+.587*d1[i+1]+.114*d1[i+2];
   const w2=Math.round(sw*scale),h2=Math.round(sh*scale);work.width=w2;work.height=h2;
   wctx.imageSmoothingEnabled=true;wctx.imageSmoothingQuality='high';wctx.drawImage(src,sx,sy,sw,sh,0,0,w2,h2);
-  const im=wctx.getImageData(0,0,w2,h2),d=im.data,n=w2*h2,L=new Float32Array(n);for(let i=0,j=0;j<n;i+=4,j++)L[j]=.299*d[i]+.587*d[i+1]+.114*d[i+2];
+  // pickup messages are always white: a pixel counts only as bright as its weakest colour, so blue rock, green grass or
+  // orange fire behind the text count as dark and only white or grey stays bright
+  const im=wctx.getImageData(0,0,w2,h2),d=im.data,n=w2*h2,L=new Float32Array(n);for(let i=0,j=0;j<n;i+=4,j++)L[j]=Math.min(d[i],d[i+1],d[i+2]);
   if(cut>0){for(let j=0;j<n;j++){const v=L[j]>cut?0:255;d[j*4]=d[j*4+1]=d[j*4+2]=v}}
   // the text must stand out from the average of a wide neighbourhood (about 13 game pixels across): with a small one, thick
   // white letters on a dark background came out hollow ("+86" read as "360"). On a bright background (snow) the margin
@@ -568,15 +571,19 @@ function tsvLines(tsv,scale,m){
     ws.sort((a,b)=>a.x0-b.x0);
     const good=ws.filter(w=>an(w.t)>=2&&w.c>=50),hh=md((good.length?good:ws).map(w=>w.y1-w.y0)),pc=good.length?md(good.map(w=>(w.x1-w.x0)/w.t.length)):0;
     while(ws.length>1){const n=an(ws[0].t);if(n===0||(n<=3&&ws[0].c<50&&ws[1].x0-ws[0].x1>hh))ws=ws.slice(1);else break}
+    // a message is one run of words ending at the right edge: anything left of a wide gap is something else
+    let cut=false;for(let i=ws.length-1;i>0;i--)if(ws[i].x0-ws[i-1].x1>hh*1.5){ws=ws.slice(i);cut=true;break}
     while(ws.length>1){const z=ws[ws.length-1];if(an(z.t)===0&&z.x0-ws[ws.length-2].x1>hh*.5)ws=ws.slice(0,-1);else break}
     // top and bottom: the middle word's (a speck glued above or below one word would make the line taller and move its centre)
     const cw=ws.filter(w=>an(w.t)>=2),yw=cw.length?cw:ws,t0=yw.map(w=>w.y0).sort((a,b)=>a-b)[yw.length>>1],t1=yw.map(w=>w.y1).sort((a,b)=>a-b)[(yw.length-1)>>1];
-    const o={x0:ws[0].x0,y0:t1-t0>=4?t0:Math.min(...ws.map(w=>w.y0)),x1:Math.max(...ws.map(w=>w.x1)),y1:t1-t0>=4?t1:Math.max(...ws.map(w=>w.y1)),t:ws.map(w=>w.t),c:ws.map(w=>w.c),wok:ws[0].c>=50};
+    const o={x0:ws[0].x0,y0:t1-t0>=4?t0:Math.min(...ws.map(w=>w.y0)),x1:Math.max(...ws.map(w=>w.x1)),y1:t1-t0>=4?t1:Math.max(...ws.map(w=>w.y1)),t:ws.map(w=>w.t),c:ws.map(w=>w.c),wok:ws[0].c>=50&&!cut};
     if(pc&&ws[0].x1-ws[0].x0>pc*ws[0].t.length*1.5){o.x0=ws[0].x1-pc*ws[0].t.length;o.wok=false}
-    const xa=Math.max(2,Math.floor(o.x0)-1),xb=Math.min(sw-3,Math.ceil(o.x1)+1),ya=Math.max(2,Math.floor(o.y0)-1),yb=Math.min(sh-3,Math.ceil(o.y1)+1),vals=[];
+    const xa=Math.max(2,Math.floor(Math.max(o.x0,o.x1-hh*8))-1),xb=Math.min(sw-3,Math.ceil(o.x1)+1),ya=Math.max(2,Math.floor(o.y0)-1),yb=Math.min(sh-3,Math.ceil(o.y1)+1),vals=[];
     for(let y=ya;y<=yb;y++)for(let x=xa;x<=xb;x++){let mn=255;for(let dy=-2;dy<=2;dy++){const row=(y+dy)*sw;for(let dx=-2;dx<=2;dx++){const q=L1[row+x+dx];if(q<mn)mn=q}}vals.push(L1[y*sw+x]-mn)}
     vals.sort((a,b)=>b-a);const top=vals.slice(0,Math.max(5,Math.round(vals.length*.12)));
-    out.push({x0:o.x0,y0:o.y0,x1:o.x1,y1:o.y1,text:o.t.join(' '),conf:o.c.reduce((a,b)=>a+b,0)/o.c.length,int:top.length?top.reduce((a,b)=>a+b,0)/top.length:0,wok:o.wok});
+    // the amount "(+133)" as one clean word: its width says how many digits it has (they are all the same width)
+    const am=ws.find(w=>/^\(\+?\d{1,7}\)$/.test(w.t));
+    out.push({x0:o.x0,y0:o.y0,x1:o.x1,y1:o.y1,text:o.t.join(' '),conf:o.c.reduce((a,b)=>a+b,0)/o.c.length,int:top.length?top.reduce((a,b)=>a+b,0)/top.length:0,wok:o.wok,am:am?{w:am.x1-am.x0,d:am.t.replace(/\D/g,''),p:am.t[1]==='+',c:am.c}:null});
   }
   return out;
 }
@@ -590,11 +597,17 @@ function parseMsg(text){
   if(isSys(s))return{type:'sys',value:0,key:'sys'};   // its line is followed like any other, but never counted
   const low=s.toLowerCase();
   const amts=()=>{const out=[],re=/\(\s*[+t*]?\s*([\d][\d,.]{0,9})\s*\)?|\+\s*([\d][\d,.]{0,9})/g;let m;while((m=re.exec(s)))out.push(num(m[1]||m[2]));return out.filter(v=>v>0)};
-  if(/[mn]es[o0]|meso/.test(low)){const a=amts();const v=a[0]||num((/(\d[\d,]{0,9})/.exec(s)||[])[1]||'');return v>0?{type:'meso',value:v,key:'m'+v}:null}
+  // "You have gained mesos (+125)": only the amount in "(+...)" matters. A line that starts "You have" or says "gained" is
+  // never an item, however garbled the rest is. An amount not read as "(+N)", or with more digits after it, is unsure.
+  if(/[mn]es[o0]|meso/.test(low)||/\b[yv][o0a]u\s*ha[vy]e\b|\bha[vy]e\s*ga|ga[il1]n[e3]d/i.test(s)&&!/e\s?x\s?[pf]\b|experi/i.test(s)){
+    let m=/\(\s*[+t*]\s*(\d[\d,]{0,9})\s*\)?/.exec(s),weak=false;
+    if(m)weak=/\d/.test(s.slice(m.index+m[0].length));else{m=/[(+]\s*(\d[\d,]{0,9})/.exec(s)||/(\d[\d,]{0,9})/.exec(s);weak=true}
+    const v=m?num(m[1]):0;return v>0?{type:'meso',value:v,key:'m'+v,weak}:null}
   if(/earn|eamed|arned|armed|camed|cained|varned|\((?:etc|use|equip|setup|cash|ete|eto|efc|eic|et|ei)\)?[.,]?\s*$/i.test(s)&&!/\bexp\b|\(\s*\+/i.test(s)){
     let r=s,cat=null;const em=/\s*\S{0,3}(?:rned|rmed|med|ned|ared)\b.*$/i.exec(r);
     if(em){const tail=em[0];const cm=/\(?\s*([A-Za-z]{2,6})\s*\)?[.,]?\s*$/.exec(tail);if(cm)cat=cm[1];r=r.slice(0,em.index)}
-    else{const cm=/\(\s*([A-Za-z]{2,6})\s*\)?[.,]?\s*$/.exec(r);if(cm){cat=cm[1];r=r.slice(0,cm.index)}}
+    else{const cm=/\(\s*([A-Za-z]{2,6})\s*\)?[.,]?\s*$/.exec(r);if(cm){cat=cm[1];r=r.slice(0,cm.index)}
+      const xm=/\s[x×]\s?(\d{1,4})\s+[A-Za-z]{4,9}[.,]?\s*$/i.exec(r);if(xm)r=r.slice(0,xm.index)+' x'+xm[1]}   // "x1 earrfed." is "x1 earned." misread
     let q=1,qm=/([x×%*+:])\s*(\d{1,4})\s*[.,]?\s*$/i.exec(r)||/(\s)(\d{1,4})\s*[.,]?\s*$/.exec(r);
     if(qm){q=+qm[2];if(qm[1]===' '&&qm[2].length>1)q=+qm[2].slice(-1);r=r.slice(0,qm.index)}
     const trunc=/(\.\.|…|[.,]\s*$)/.test(r.trim());
@@ -607,6 +620,7 @@ function parseMsg(text){
   if(expTok||/\brece|receiv/i.test(s)){let a=amts(),weak=!expTok;   // "received" alone could be a misread meso line
     if(!a.length){const m=expTok&&/(\d[\d,]{0,8})\D{0,3}$/.exec(s);if(!m)return null;a=[num(m[1])];weak=true}   // "(+28)" read as "L128)" or "C28)"
     const v=a[0],bonus=a[1]||0;return{type:'exp',value:v+bonus,base:v,bonus,weak,key:'e'+v+'_'+bonus}}
+  if(/\bga[il1]?[nm]e?d\b|gained/i.test(s)&&/\(\s*\+\s*\d/.test(s)){const a=amts();if(a[0]>0)return{type:'meso',value:a[0],key:'m'+a[0],weak:true}}
   return parseLine(s);
 }
 // solo: an EXP amount must be one of this map's monsters'; a single misread digit is put right ("283" -> 28)
@@ -629,8 +643,25 @@ function mesoRange(){const map=curMap(),ms=mobsFor(map);if(!DB||!ms.length||ms.s
   let lo=Infinity,hi=0;for(const n of names){const x=DB.mobs[n];if(!x||!x.meso||!(x.meso[1]>0))return null;lo=Math.min(lo,x.meso[0]);hi=Math.max(hi,x.meso[1])}
   return [lo,hi]}
 function makeTracker(){
-  const T={stack:[],bottom:null,pitch:null,H:null,right:null,fresh:null,maxSlot:7,first:true,lastT:null,id:1,hs:[],rs:[],ps:[],bs:[],fs:[]};
+  const T={stack:[],bottom:null,pitch:null,H:null,right:null,fresh:null,maxSlot:7,first:true,lastT:null,id:1,hs:[],rs:[],ps:[],bs:[],fs:[],am:[],amF:null};
+  // Digits in the game's font all have the same width, so the width of "(+133)" tells how many digits it holds. The width per
+  // digit is learned from clear reads (a 3-digit amount is about 0.4 of its height wider than a 2-digit one); a read whose digit
+  // count does not fit its width ("(+115)" read as "(+1195)") counts for little.
+  const amFit=()=>{const g=new Map();for(const a of T.am){const v=g.get(a.n)||[];v.push(a.w);g.set(a.n,v)}
+    const pts=[...g].filter(x=>x[1].length>=2).map(([n,v])=>[n,med(v),v.length]).sort((a,b)=>b[2]-a[2]);if(!pts.length)return null;
+    if(pts.length>=2){let sw=0,sn=0,sy=0,snn=0,sny=0;for(const [n,y,c] of pts){sw+=c;sn+=c*n;sy+=c*y;snn+=c*n*n;sny+=c*n*y}
+      const d=(sw*sny-sn*sy)/(sw*snn-sn*sn),o=(sy-d*sn)/sw;if(d>T.H*.3&&d<T.H*1.5&&o>0)return{d,o}}
+    const [n,y]=pts[0],d=y/(n+1.8);return{d,o:1.8*d}};   // one amount length seen so far: "(+" and ")" together are about 1.8 digits wide
+  const amN=c=>c.am&&T.amF?(c.am.w-T.amF.o)/T.amF.d:null;   // digits that fit the width; outside 0.5..8.5 the reader's box for the word is off
+  const amBad=(c,p)=>{const nh=amN(c);if(nh==null||!p||(p.type!=='exp'&&p.type!=='meso')||!(nh>.5&&nh<8.5))return false;
+    return Math.abs(nh-String(p.type==='exp'?p.base:p.value).length)>.5};
+  // "(+30)" read as "(430)": the "+" became a digit. The width says one digit fewer, so the first one goes.
+  const amFix=(c,p)=>{const nh=amN(c);if(!p||c.am.p||nh==null||(p.type!=='exp'&&p.type!=='meso'))return p;const D=c.am.d,v=+D;
+    if(Math.abs(nh-(D.length-1))<=.5&&D.length>=2&&D[1]!=='0'&&(p.type==='exp'?p.base:p.value)===v){const x=+D.slice(1);
+      return p.type==='exp'?{...p,value:x+(p.bonus||0),base:x,key:'e'+x+'_'+(p.bonus||0),weak:false,fixed:true}:{...p,value:x,key:'m'+x,weak:false,fixed:true}}
+    return p};
   const med=a=>{const b=[...a].sort((x,y)=>x-y);return b.length?b[b.length>>1]:null};
+  const looksMsg=t=>nrm(t).length>=8&&/rece|eived|e\s?x\s?p|gain|ained|mes[o0]s|earn|arned|\((?:etc|use|equip|setup|cash)|\byou\b/i.test(t);
   T.update=function(lines,now,flip,sh){
     const dt=T.lastT==null?0.25:Math.max(0.05,now-T.lastT);T.lastT=now;const wasFirst=T.first;T.first=false;
     if(flip)lines=lines.map(l=>({...l,y0:sh-l.y1,y1:sh-l.y0}));
@@ -656,16 +687,20 @@ function makeTracker(){
     // what is on screen now: each old line k slots further up with the same text, the same width (lines are
     // right-aligned) and a brightness that only ever drops, and a fresh bright line in each of the k new slots.
     const H=T.H,full=c=>c.x1>=T.right-H*.8,q=c=>Math.min(1,Math.max(0,(c.int-F*.6)/(F*.3)));   // faded lines are often misread, so their text counts for less
-    for(const c of cur.values()){c.p=c.int>=F*.8?fixAmount(parseMsg(c.text)):null;c.cp=c.p&&!c.p.weak?c.p:null}   // what each clearly readable line says
+    for(const c of cur.values()){c.p=c.int>=F*.8?fixAmount(parseMsg(c.text)):null;if(c.p&&c.am)c.p=amFix(c,c.p);
+      if(c.p&&c.am&&c.am.p&&c.am.c>=90&&c.int>=F*.9&&!amBad(c,c.p)&&c.am.d===String(c.p.type==='exp'?c.p.base:c.p.value)){T.am.push({n:c.am.d.length,w:c.am.w});if(T.am.length>60)T.am.shift()}
+      c.cp=c.p&&(!c.p.weak||c.p.fixed)&&!amBad(c,c.p)?c.p:null}   // what each clearly readable line says
+    T.amF=amFit();
     let best=null;const maxCur=cur.size?Math.max(...cur.keys()):-1,all=[];
     for(let k=0;k<=Math.min(10,maxCur+1);k++){let cost=k*.06;
-      for(let j=0;j<k;j++){const c=cur.get(j);if(!c){cost+=1;continue}cost+=.35;const lim=F-decay;if(c.int<lim)cost+=Math.min(1.5,(lim-c.int)/10)}
+      for(let j=0;j<k;j++){const c=cur.get(j);if(!c){cost+=1;continue}cost+=c.p||looksMsg(c.text)?.35:.75;const lim=F-decay;if(c.int<lim)cost+=Math.min(1.5,(lim-c.int)/10)}   // a new line is bright and reads like a message
       for(const e of T.stack){const s=e.slot+k,c=cur.get(s);
         if(s>T.maxSlot){cost+=.05;continue}
         if(!c){const ei=e.int-20*dt;cost+=e.ph?.15:ei>F*.8?.6:ei>F*.65?.3:.1;continue}   // not found: unlikely for a line that should still be bright
         if(e.ph)continue;
         const w=q(c);let sim=Math.max(tsim(e.text,c.text),e.best?tsim(e.best,c.text):0);if(e.lp&&c.cp&&e.lp.key===c.cp.key)sim=Math.max(sim,.8);cost+=(1-sim)*w;
         if(e.full&&full(c)&&c.wok!==false){let dw=9,nar=false;for(const x of e.wds){const d=Math.abs(x-c.wd)/H;if(d<dw){dw=d;nar=c.wd<x}}   // closest of its last few widths: one bad measure doesn't decide
+          if(nar&&e.lp&&c.cp&&e.lp.key===c.cp.key)dw=0;   // narrower but saying the same thing: the same line with its left end covered
           if(dw>.35)cost+=Math.min(1.2,(dw-.35)*2)*Math.max(nar?.3:.6,w)}   // a faint line may lose its left end, never gain width
         if(e.lp&&c.cp){if(e.lp.type!==c.cp.type)cost+=.6*w;else if(e.lp.key!==c.cp.key&&!(c.cp.unk||e.lp.unk))cost+=.35*w}   // two clear reads of one line say the same thing
         const up=c.int-e.int-ub;if(up>0)cost+=Math.min(1.5,up/8);
@@ -678,20 +713,31 @@ function makeTracker(){
     for(let j=0;j<k;j++){const c=cur.get(j),e={id:T.id++,slot:j,int:F*.85,text:'',wd:0,wds:[],full:false,reads:[],counted:false,miss:c?0:1,ph:!c,born:now};if(c)see(e,c);ns.push(e)}
     for(const e of T.stack){e.slot+=k;const c=cur.get(e.slot);if(c)see(e,c);else e.miss++;
       if(e.miss<3&&e.slot<=T.maxSlot+1)ns.push(e);else if(!e.counted)out.push(...commit(e,true))}
-    for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.6){const p=c.p||fixAmount(parseMsg(c.text));if(p)e.reads.push({...p,w:Math.max(.05,c.conf/100)*(c.int/F)*(p.weak&&!p.fixed?.5:1)})}}
+    for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.6){let p=c.p||fixAmount(parseMsg(c.text));if(p&&c.am&&!c.p)p=amFix(c,p);
+      // how much a read counts: a line is read best while it is new and bright; as it fades, digits lose strokes ("+87" turns into "+37")
+      if(p){const cf=Math.max(.05,c.conf/100)*(p.weak&&!p.fixed?.5:1)*(amBad(c,p)?.1:1),g=Math.min(1,Math.max(0,(c.int/F-.75)/.2))**3;e.reads.push({...p,w:cf*(c.int/F),g:cf*Math.max(.03,g)})}}}
     T.stack=ns;if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key)});
     for(const e of T.stack)if(!e.counted&&(e.slot>=3||e.int<F*.72||e.reads.length))out.push(...commit(e,e.slot>=3||e.int<F*.72));
     if(MGM.dbg&&out.length)MGM.dbg.push({commit:out.map(o=>o.key+'#'+(o.id||''))});
     return out;
   };
+  T.flush=()=>{const out=[];for(const e of T.stack)if(!e.counted)out.push(...commit(e,true));return out};   // pause/end: count what is still on screen
   function commit(e,force){
     if(!e.reads.length){if(force)e.counted=true;return[]}
     const by=new Map(),mr=e.reads.some(r=>r.type==='meso')?mesoRange():null;
-    for(const r of e.reads){const o=by.get(r.key)||{n:0,w:0,rs:[]};o.n+=r.unk?.34:1;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)||r.type==='meso'&&mr&&r.value>=mr[0]*.5&&r.value<=mr[1]*3?1:0);o.rs.push(r);by.set(r.key,o)}
-    const ranked=[...by.values()].sort((a,b)=>b.n-a.n||b.w-a.w),top=ranked[0],others=ranked.slice(1).reduce((s,o)=>s+o.n,0);
-    // reads that disagree ("+5" once read as "+9"): wait for more while the line is still bright, then go with the majority
-    if(!force&&(top.n<2||others>0&&e.int>=(T.fresh||180)*.85))return[];
-    e.counted=true;const r=top.rs.sort((a,b)=>b.w-a.w)[0];if(r.type==='sys')return[];
+    // an item is voted on by its name; the amount ("x1") is settled after, among the reads of that name
+    for(const r of e.reads){const k=r.type==='item'?'i'+nrm(r.name):r.key,o=by.get(k)||{n:0,g:0,nf:0,w:0,rs:[]},u=r.unk?.34:1;
+      o.n+=u;o.g+=u*r.g;if(r.g>=.25)o.nf+=u;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)||r.type==='meso'&&mr&&r.value>=mr[0]*.5&&r.value<=mr[1]*3?1:0);o.rs.push(r);by.set(k,o)}
+    const ranked=[...by.values()].sort((a,b)=>b.g-a.g||b.n-a.n||b.w-a.w),top=ranked[0],rest=ranked.slice(1),others=rest.reduce((s,o)=>s+o.n,0);
+    // count a line once two fresh reads agree on it and no fresh read disagrees; otherwise wait until it has faded
+    // (later reads are worth little) and go with the reads that count most
+    const agree=top.nf>=2&&!rest.some(o=>o.nf>0),faded=e.int<(T.fresh||180)*.85&&top.n+others>=2;
+    if(!force&&!agree&&!faded&&!(top.n>=2&&!others&&top.nf>=1))return[];
+    e.counted=true;let r=top.rs.sort((a,b)=>b.w-a.w)[0];if(r.type==='sys')return[];
+    if(r.type==='item'){   // almost every pickup is x1: another amount needs two reads that agree on it and outnumber the rest
+      const qc=new Map();for(const x of top.rs)qc.set(x.qty||1,(qc.get(x.qty||1)||0)+1);
+      const [q,n]=[...qc].sort((a,b)=>b[1]-a[1]||(a[0]===1?-1:b[0]===1?1:0))[0],qty=q!==1&&n>=2&&n>top.rs.length/2?q:1;
+      if(qty!==(r.qty||1))r={...r,qty,key:'i'+nrm(r.name)+'x'+qty}}
     return[r.type==='item'&&r.unk&&DB?{...r,name:'Unreadable item',key:'iunreadable',id:e.id,born:e.born}:{...r,id:e.id,born:e.born}];
   }
   return T;
@@ -736,7 +782,7 @@ function isOutlier(p){ // a misread like "+231" -> "5842" shows up as one wildly
 function record(p){
   if(state!=='run'||isOutlier(p))return;
   const e={t:elapsed(),type:p.type,value:p.value};if(p.type==='item')e.raw=(p.raw||'').slice(0,80);if(p.name)e.name=p.name;if(p.bonus){e.base=p.base;e.bonus=p.bonus}if(p.qty>1)e.qty=p.qty;S.events.push(e);
-  if(p.type==='exp'&&S.bar&&S.bar.last!=null)S.bar.msg=(S.bar.msg||0)+p.value;
+  if(p.type==='exp'&&S.bar&&S.bar.last!=null){S.bar.msg=(S.bar.msg||0)+p.value;S.bar.since=(S.bar.since||0)+p.value}
   const f=$('feed');if(f.firstChild&&f.firstChild.tagName==='SMALL')f.innerHTML='';
   const d=document.createElement('div');d.className=p.type==='exp'?'exp':p.type==='meso'?'meso':'itm';
   d.textContent=`${hms(e.t)}  ${p.type==='item'?'Item: '+p.name+(p.qty>1?' ×'+p.qty:''):'+'+fmt(p.value)+(p.type==='exp'?' EXP':' mesos')}`;
@@ -752,7 +798,7 @@ $('bStart').onclick=()=>{
   if(Notification&&Notification.permission==='default'&&S.limitMin)Notification.requestPermission();
   setButtons();setStatus('Running');
 };
-function pause(){if(state!=='run')return;S.elapsed+=Date.now()-runStart;state='paused';setButtons();setStatus('Paused');store.set('live',{S,state})}
+function pause(){if(state!=='run')return;for(const p of MT.flush())record(p);S.elapsed+=Date.now()-runStart;state='paused';setButtons();setStatus('Paused');store.set('live',{S,state})}
 $('bPause').onclick=()=>state==='run'?pause():$('bStart').onclick();
 $('bEnd').onclick=()=>endSession();
 function setButtons(){
@@ -786,8 +832,10 @@ function onTick(){
   else if(!manualBox.gain&&S&&S.bar&&S.bar.gained>(onTick.g||0)&&Date.now()-(onTick.m||runStart)>15000&&(!S.events.length||elapsed()-S.events[S.events.length-1].t>45000)){onTick.m=Date.now();onTick.g=S.bar.gained;findMsgBox(false)}
   renderPip();
 }
-// EXP total: when the EXP bar is being read, its rise is exact; message EXP fills in any time the bar wasn't tracked
-function expTotal(s){const t=totals(s.events).exp;const b=s.bar;return b&&b.gained>0&&s.barTotals!==false?Math.max(t,b.gained+Math.max(0,t-(b.msg||0))):t}   // both can only miss EXP (a misread is rejected), so the larger one is closer
+// EXP total: the EXP bar is the game's own number, so while it is being read its rise is the total. Messages only fill in
+// the time before the bar was first read, and kills since its last change (the bar is read about once a second).
+function expTotal(s){const t=totals(s.events).exp;const b=s.bar;if(!b||s.barTotals===false||b.last==null&&!b.gained)return t;
+  return b.gained+Math.max(0,t-(b.msg||0))+(b.fill||0)+(b.last!=null?b.since||0:0)}
 function totals(ev){let exp=0,meso=0,items=0;for(const e of ev){if(e.type==='exp')exp+=e.value;else if(e.type==='meso')meso+=e.value;else items+=e.qty||1}return{exp,meso,items}}
 
 /* ---------- alarm ---------- */
@@ -803,7 +851,7 @@ function stopAlarm(){clearInterval(alarmTimer);$('hdr').classList.remove('alarm'
 
 /* ---------- end + summary ---------- */
 function endSession(timeUp){
-  if(!S)return;if(state==='run')S.elapsed+=Date.now()-runStart;
+  if(!S)return;if(state==='run'){for(const p of MT.flush())record(p);S.elapsed+=Date.now()-runStart}
   state='done';S.ended=new Date().toISOString();setButtons();setStatus(timeUp?'Time up · session ended':'Session ended');
   if(timeUp)ringAlarm();
   if(S.elapsed>60000||S.events.length){const h=store.get('history',[]);h.push(compact(S));store.set('history',h.slice(-300))}
@@ -877,7 +925,7 @@ $('bHistCopy').onclick=()=>copy(mapStats().map((r,i)=>`${i+1}. ${r.map} — ${fm
 let mapVotes=[];
 const curMap=()=>($('mapName').value.trim()||'Unknown map');
 const mapUrl=n=>n&&n!=='Unknown map'?`https://meowdb.com/msclassic/maps?view=list&q=${encodeURIComponent(n)}`:'https://meowdb.com/msclassic/maps';
-function setMap(n){$('mapName').value=n;$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();showMapPic();loadAutoMobs()}
+function setMap(n){$('mapName').value=n;itemCache.clear();$('mapLink').href=mapUrl(n);showMobs();renderKills();renderPip();showMapPic();loadAutoMobs()}
 function showMapPic(){const m=DB&&DB.maps[curMap()];$('mapPic').innerHTML=m&&m.mini?`<img src="${WIMG}${m.mini}" alt="Minimap of ${esc(curMap())}" style="max-width:100%;border-radius:6px;border:1px solid var(--line)">`:''}
 $('mapName').oninput=()=>{$('mapName').dataset.manual=1;$('mapLink').href=mapUrl(curMap());showMobs();renderKills()};
 /* The map name isn't always shown, so maps are recognised by their minimap picture instead.
@@ -904,7 +952,19 @@ function canonItem(n,trunc){
   if(bs>.1)for(const x of (DB.items||[])){const sc=score(x);if(sc<bs){bs=sc;best=x}}
   const out=bs<=.32?best:n;if(itemCache.size>2000)itemCache.clear();itemCache.set(ck,out);return out;
 }
-let titleVotes=[];
+let titleVotes=[],mapSure=false,mapDoubt=false,mapTries=0;
+/* The map is read from the minimap title until two reads agree, then only once a minute. The whole game going
+   black (a portal or loading screen) means a new map, so it is read again as soon as the picture comes back. */
+const bk=document.createElement('canvas');bk.width=32;bk.height=18;const bkx=bk.getContext('2d',{willReadFrequently:true});let wasBlack=false;
+function noteBlack(src){
+  const W=src.videoWidth||src.width,H=src.videoHeight||src.height;if(!W)return;
+  bkx.drawImage(src,W*.15,H*.15,W*.7,H*.6,0,0,32,18);const d=bkx.getImageData(0,0,32,18).data;let s=0,mx=0;
+  for(let i=0;i<d.length;i+=4){const v=d[i]+d[i+1]+d[i+2];s+=v;if(v>mx)mx=v}
+  const black=s/(d.length/4)<18&&mx<120;
+  if(black&&!wasBlack){mapSure=false;mapDoubt=false;titleVotes=[];mapTries=0}
+  if(!black&&wasBlack)lastMapAt=0;
+  wasBlack=black;
+}
 // The minimap title's second line is the map ("Line 1 <Area 1>"); the wiki writes it "Line 1 (Area 1)", so names
 // are compared on letters and digits only. With the database loaded, only real map names are ever accepted.
 async function canonMap(street,map){
@@ -921,8 +981,12 @@ async function onMapTitle(text){
   if(!name)return false;
   titleVotes.push(name);titleVotes=titleVotes.slice(-3);
   if(Date.now()-(manualAt||0)<60000)return true;
-  if(titleVotes.filter(v=>v===name).length>=(DB?2:3)&&name!==$('mapName').value){
-    setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
+  const agree=titleVotes.filter(v=>v===name).length,cur=$('mapName').value;
+  mapDoubt=mapSure&&name!==cur;   // a read that disagrees: check again soon instead of in a minute
+  if(agree>=(DB?2:3)){
+    if(name!==cur){if(mapSure&&agree<3)return true;   // a known map only changes on three matching reads (or after a loading screen)
+      setMap(name);learnMap();setStatus((state==='run'?'Running':'Ready')+' · map: '+name)}
+    mapSure=true;mapDoubt=false;mapTries=0}
   return true;
 }
 let manualAt=0;const mapIds=store.get('mapIds',{});
@@ -940,7 +1004,7 @@ function learnMap(){
   if(!ex){minis.push({name:n,sig});store.set('minimaps',minis.slice(-400))}
   $('mapLearn').textContent='Minimap remembered for '+n;
 }
-$('mapName').onchange=()=>{manualAt=Date.now();learnMap();loadAutoMobs()};
+$('mapName').onchange=()=>{manualAt=Date.now();mapSure=true;mapDoubt=false;learnMap();loadAutoMobs()};
 // name suggestions (map names match the original game's, from maplestory.io)
 $('mapName').addEventListener('focus',()=>{if(DB)$('mapList').innerHTML=Object.keys(DB.maps).sort().map(n=>`<option value="${esc(n)}">`).join('')});
 $('bMapSide').onclick=()=>{const w=Math.round(screen.availWidth*.33);window.open(mapUrl(curMap()),'meowdb',`popup,width=${w},height=${screen.availHeight},left=${screen.availWidth-w},top=0`)};
@@ -958,7 +1022,8 @@ $('bPip').onclick=async()=>{
     pipWin=window.open('','mgmpip','popup,width=260,height=190');if(!pipWin)return;
   }
   pipWin.document.head.innerHTML=`<title>Grind Meter</title><style>${css}</style>`;
-  pipWin.document.body.innerHTML=`<div id="p"></div><div class="r" style="margin-top:6px"><button id="pp">Pause</button><button id="pe">End</button></div>`;
+  pipWin.document.body.innerHTML=`<div id="p"></div><div class="r" style="margin-top:6px"><button id="ps">Start</button><button id="pp">Pause</button><button id="pe">End</button></div>`;
+  pipWin.document.getElementById('ps').onclick=()=>{if(stream)$('bStart').onclick();else $('bShare').onclick()};
   pipWin.document.getElementById('pp').onclick=()=>$('bPause').onclick();
   pipWin.document.getElementById('pe').onclick=()=>endSession();
   pipWin.addEventListener('pagehide',()=>{pipWin=null});
@@ -973,7 +1038,10 @@ function renderPip(){
    <div class="r"><span class="exp v">${fmt(tot.exp)} EXP</span><span class="exp">${hr>.003?fmt(tot.exp/hr):'–'}/hr</span></div>
    <div class="r"><span class="meso v">${fmt(tot.meso)} mesos</span><span class="meso">${hr>.003?fmt(tot.meso/hr):'–'}/hr</span></div>
    <div class="r"><span>${tot.items} items</span><span class="m">${esc(curMap())}</span></div>`;
-  const pp=pipWin.document.getElementById('pp');if(pp)pp.textContent=state==='paused'?'Resume':'Pause';
+  const pp=pipWin.document.getElementById('pp'),ps=pipWin.document.getElementById('ps'),pe=pipWin.document.getElementById('pe');
+  if(pp){pp.textContent=state==='paused'?'Resume':'Pause';pp.hidden=!(state==='run'||state==='paused')}
+  if(pe)pe.hidden=!(state==='run'||state==='paused');
+  if(ps){ps.hidden=state==='run'||state==='paused';ps.textContent=stream?'Start':'Share screen'}   // nothing running: Start (or share the game first)
 }
 
 
@@ -1162,7 +1230,7 @@ function splitKills(d,mobs){
   return out;
 }
 function barAdd(b,d,map){
-  b.gained+=d;
+  b.gained+=d;b.since=0;   // the bar now includes the kills read from messages before this
   const solo=$('solo').checked,k=solo?splitKills(d,mobsFor(map)):null;
   b.kills=b.kills||{};b.killExp=b.killExp||0;b.other=b.other||0;
   if(k){b.killExp+=d;for(const [n,c] of Object.entries(k)){const x=b.kills[n]||(b.kills[n]={n:0,exp:0,map});x.n+=c;x.exp+=c*((mobsFor(map).find(m=>m.name===n)||{}).exp||0)}}
@@ -1173,7 +1241,7 @@ function onBarText(text){MGM.lastBar=text;
   const b=S.bar||(S.bar={gained:0,msg:0,last:null,lastPct:null,need:null,levels:0});
   const r=barParts(text,b.lastPct);if(!r){if(MGM.barLog)MGM.barLog.push([Date.now()-MGM.t0,text.trim(),'unreadable']);return}
   const raw=b.raw&&b.raw.ds===r.ds?(b.raw.n++,b.raw):(b.raw={ds:r.ds,n:1,pct:r.pct});
-  const rebase=()=>{b.last=r.cur;b.lastAt=Date.now();if(r.pct!=null)b.lastPct=r.pct;if(r.need)b.need=r.need;else if(r.pct>=1)b.need=Math.round(r.cur*100/r.pct);b.pend=null;b.miss=0;b.hist=[];b.pctN=r.pct!=null?1:0;b.pctAlt=null};
+  const rebase=()=>{b.fill=(b.fill||0)+(b.since||0);b.since=0;b.last=r.cur;b.lastAt=Date.now();if(r.pct!=null)b.lastPct=r.pct;if(r.need)b.need=r.need;else if(r.pct>=1)b.need=Math.round(r.cur*100/r.pct);b.pend=null;b.miss=0;b.hist=[];b.pctN=r.pct!=null?1:0;b.pctAlt=null};
   // the percent is only used as a check once it has been read the same way a few times; a misread start percent
   // ("[24.00%]" read as 40.09) is replaced when three reads agree on another value
   if(r.pct!=null&&b.lastPct!=null){if(Math.abs(r.pct-b.lastPct)<0.5)b.pctN=Math.min(9,(b.pctN||0)+1);
@@ -1205,7 +1273,7 @@ function onBarText(text){MGM.lastBar=text;
     else b.pend=s;
     if(r.pct!=null&&Math.abs(r.pct-b.lastPct)<0.5)b.lastPct=r.pct;
   }else if(raw.n>=3&&r.pct!=null){b.miss=(b.miss||0)+1;              // the same unexpected reading three times
-    if(b.lastPct>=80&&r.pct<=20&&b.need){b.gained+=(b.need-b.last)+r.cur;b.other=(b.other||0)+(b.need-b.last)+r.cur;b.levels++;b.need=null;rebase()} // level-up
+    if(b.lastPct>=80&&r.pct<=20&&b.need){b.gained+=(b.need-b.last)+r.cur;b.since=0;b.other=(b.other||0)+(b.need-b.last)+r.cur;b.levels++;b.need=null;rebase()} // level-up
     else if(r.cur<b.last&&r.pct<b.lastPct-0.2)rebase();             // EXP lost on death: not a gain
     else if(b.miss>=10&&r.ds.length===String(b.last).length&&Math.abs(r.pct-b.lastPct)<5){   // lost track: start again from here
       const d=r.cur-b.last,dp=(r.pct-b.lastPct)/100*(b.need||0);
