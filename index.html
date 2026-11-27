@@ -566,7 +566,9 @@ function tsvLines(tsv,scale,m){
     const good=ws.filter(w=>an(w.t)>=2&&w.c>=50),hh=md((good.length?good:ws).map(w=>w.y1-w.y0)),pc=good.length?md(good.map(w=>(w.x1-w.x0)/w.t.length)):0;
     while(ws.length>1){const n=an(ws[0].t);if(n===0||(n<=3&&ws[0].c<50&&ws[1].x0-ws[0].x1>hh))ws=ws.slice(1);else break}
     while(ws.length>1){const z=ws[ws.length-1];if(an(z.t)===0&&z.x0-ws[ws.length-2].x1>hh*.5)ws=ws.slice(0,-1);else break}
-    const o={x0:ws[0].x0,y0:Math.min(...ws.map(w=>w.y0)),x1:Math.max(...ws.map(w=>w.x1)),y1:Math.max(...ws.map(w=>w.y1)),t:ws.map(w=>w.t),c:ws.map(w=>w.c),wok:ws[0].c>=50};
+    // top and bottom: the middle word's (a speck glued above or below one word would make the line taller and move its centre)
+    const cw=ws.filter(w=>an(w.t)>=2),yw=cw.length?cw:ws,t0=yw.map(w=>w.y0).sort((a,b)=>a-b)[yw.length>>1],t1=yw.map(w=>w.y1).sort((a,b)=>a-b)[(yw.length-1)>>1];
+    const o={x0:ws[0].x0,y0:t1-t0>=4?t0:Math.min(...ws.map(w=>w.y0)),x1:Math.max(...ws.map(w=>w.x1)),y1:t1-t0>=4?t1:Math.max(...ws.map(w=>w.y1)),t:ws.map(w=>w.t),c:ws.map(w=>w.c),wok:ws[0].c>=50};
     if(pc&&ws[0].x1-ws[0].x0>pc*ws[0].t.length*1.5){o.x0=ws[0].x1-pc*ws[0].t.length;o.wok=false}
     const xa=Math.max(2,Math.floor(o.x0)-1),xb=Math.min(sw-3,Math.ceil(o.x1)+1),ya=Math.max(2,Math.floor(o.y0)-1),yb=Math.min(sh-3,Math.ceil(o.y1)+1),vals=[];
     for(let y=ya;y<=yb;y++)for(let x=xa;x<=xb;x++){let mn=255;for(let dy=-2;dy<=2;dy++){const row=(y+dy)*sw;for(let dx=-2;dx<=2;dx++){const q=L1[row+x+dx];if(q<mn)mn=q}}vals.push(L1[y*sw+x]-mn)}
