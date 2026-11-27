@@ -201,7 +201,7 @@ for(const k of ['exp','meso','item']){const el=$('p'+k[0].toUpperCase()+k.slice(
 $('bPatReset').onclick=()=>{for(const k of ['exp','meso','item']){pat[k]=DEF[k];const id='p'+k[0].toUpperCase()+k.slice(1);$(id).value=DEF[k];store.set(id,DEF[k])}};
 const num=s=>parseInt(String(s).replace(/[^\d]/g,''),10)||0;
 const known={exp:new Map(),meso:new Map()}; // values read cleanly (with a visible "+"), used to fix "+" misread as a digit
-let mobExpSet=new Set();
+let mobExpSet=new Set(),mobExpFull=false;   // EXP amounts this map's monsters give; full: every monster on the map is known
 function amounts(L){
   // every bracketed or plus-prefixed amount on the line, in order
   const out=[];const re=/[(\[{]\s*([^\d\s()\[\]{}]{0,2})\s*([\d][\d,.]*)\s*[)\]}]?|\+\s?([\d][\d,.]*)/g;let m;
@@ -554,23 +554,35 @@ function msgCrop(src,r,scale,cut){
 }
 // the reader's words grouped into lines, in the crop's own pixels, with how bright (unfaded) each line is
 function tsvLines(tsv,scale,m){
-  const by=new Map();
+  const by=new Map(),an=s=>s.replace(/[^A-Za-z0-9]/g,'').length,md=a=>{const b=[...a].sort((x,y)=>x-y);return b[b.length>>1]};
   for(const l of (tsv||'').split('\n')){const a=l.split('\t');if(a.length<12||!a[11].trim())continue;const k=a[2]+'.'+a[3]+'.'+a[4];
-    const x0=+a[6]/scale,y0=+a[7]/scale,x1=(+a[6]+ +a[8])/scale,y1=(+a[7]+ +a[9])/scale;const o=by.get(k);
-    if(o){o.x0=Math.min(o.x0,x0);o.y0=Math.min(o.y0,y0);o.x1=Math.max(o.x1,x1);o.y1=Math.max(o.y1,y1);o.t.push(a[11]);o.c.push(+a[10])}else by.set(k,{x0,y0,x1,y1,t:[a[11]],c:[+a[10]]})}
+    const w={x0:+a[6]/scale,y0:+a[7]/scale,x1:(+a[6]+ +a[8])/scale,y1:(+a[7]+ +a[9])/scale,t:a[11],c:+a[10]},o=by.get(k);if(o)o.push(w);else by.set(k,[w])}
   const {L1,sw,sh}=m,out=[];
-  for(const o of by.values()){
+  for(let ws of by.values()){
+    // Specks of a busy background left of the text come back as "." or "," or a stray letter set apart from the line,
+    // or get glued onto its first word ("Maple" twice as wide as it should be). Left in, they make the line look
+    // wider than it is, so they are cut off; a first word that had to be cut is flagged (wok:false) as an unsure width.
+    ws.sort((a,b)=>a.x0-b.x0);
+    const good=ws.filter(w=>an(w.t)>=2&&w.c>=50),hh=md((good.length?good:ws).map(w=>w.y1-w.y0)),pc=good.length?md(good.map(w=>(w.x1-w.x0)/w.t.length)):0;
+    while(ws.length>1){const n=an(ws[0].t);if(n===0||(n<=3&&ws[0].c<50&&ws[1].x0-ws[0].x1>hh))ws=ws.slice(1);else break}
+    while(ws.length>1){const z=ws[ws.length-1];if(an(z.t)===0&&z.x0-ws[ws.length-2].x1>hh*.5)ws=ws.slice(0,-1);else break}
+    const o={x0:ws[0].x0,y0:Math.min(...ws.map(w=>w.y0)),x1:Math.max(...ws.map(w=>w.x1)),y1:Math.max(...ws.map(w=>w.y1)),t:ws.map(w=>w.t),c:ws.map(w=>w.c),wok:ws[0].c>=50};
+    if(pc&&ws[0].x1-ws[0].x0>pc*ws[0].t.length*1.5){o.x0=ws[0].x1-pc*ws[0].t.length;o.wok=false}
     const xa=Math.max(2,Math.floor(o.x0)-1),xb=Math.min(sw-3,Math.ceil(o.x1)+1),ya=Math.max(2,Math.floor(o.y0)-1),yb=Math.min(sh-3,Math.ceil(o.y1)+1),vals=[];
     for(let y=ya;y<=yb;y++)for(let x=xa;x<=xb;x++){let mn=255;for(let dy=-2;dy<=2;dy++){const row=(y+dy)*sw;for(let dx=-2;dx<=2;dx++){const q=L1[row+x+dx];if(q<mn)mn=q}}vals.push(L1[y*sw+x]-mn)}
     vals.sort((a,b)=>b-a);const top=vals.slice(0,Math.max(5,Math.round(vals.length*.12)));
-    out.push({x0:o.x0,y0:o.y0,x1:o.x1,y1:o.y1,text:o.t.join(' '),conf:o.c.reduce((a,b)=>a+b,0)/o.c.length,int:top.length?top.reduce((a,b)=>a+b,0)/top.length:0});
+    out.push({x0:o.x0,y0:o.y0,x1:o.x1,y1:o.y1,text:o.t.join(' '),conf:o.c.reduce((a,b)=>a+b,0)/o.c.length,int:top.length?top.reduce((a,b)=>a+b,0)/top.length:0,wok:o.wok});
   }
   return out;
 }
+// game notices that show up in the same box but are not pickups, e.g. "You can't get anymore items." when the inventory is full
+const SYS_MSGS=['youcantgetanymoreitems','youcannotgetanymoreitems','yourinventoryisfull','inventoryisfull','youcannotpickupthisitem','youcantpickupthisitem','thisitemcannotbepickedup'];
+const isSys=s=>{const n=nrm(s);return /c[ae]n[nt]?[o0]?t(?:get|pick|carry|hold)|anym[o0ae]re?it|inv[e3]nt[o0]ry|isfull|unableto/.test(n)||SYS_MSGS.some(m=>tsim(m,n)>.7)};
 // one message line -> what it says. Classic: "You received EXP (+28)", "Maple Leaf x1 earned. (Etc)",
 // "Bubbling's Hug... x1 earned. (Etc)" (long names are cut short with "..."). Other wordings fall back to parseLine.
 function parseMsg(text){
   const s=String(text).replace(/[‘’`]/g,"'").replace(/[|_~]/g,' ').replace(/\s+/g,' ').trim();if(nrm(s).length<5)return null;
+  if(isSys(s))return{type:'sys',value:0,key:'sys'};   // its line is followed like any other, but never counted
   const low=s.toLowerCase();
   const amts=()=>{const out=[],re=/\(\s*[+t*]?\s*([\d][\d,.]{0,9})\s*\)?|\+\s*([\d][\d,.]{0,9})/g;let m;while((m=re.exec(s)))out.push(num(m[1]||m[2]));return out.filter(v=>v>0)};
   if(/[mn]es[o0]|meso/.test(low)){const a=amts();const v=a[0]||num((/(\d[\d,]{0,9})/.exec(s)||[])[1]||'');return v>0?{type:'meso',value:v,key:'m'+v}:null}
@@ -600,13 +612,17 @@ function fixAmount(p){
   const fit=(v,ok)=>{const s=String(v),c=new Set();for(const x of edits1(s))if(x&&x[0]!=='0'&&ok(+x))c.add(+x);
     if(!c.size&&s.length>=3)for(const x of [s.slice(1),s.slice(0,-1),s.slice(1,-1)])if(x&&x[0]!=='0'&&ok(+x))c.add(+x);
     return c.size===1?[...c][0]:null};
-  if(p.type==='exp'&&!p.bonus&&$('solo').checked&&mobExpSet.size&&!mobExpSet.has(p.value)){
+  if(p.type==='exp'&&!p.bonus&&$('solo').checked&&mobExpFull&&mobExpSet.size&&!mobExpSet.has(p.value)){
     const v=fit(p.value,x=>mobExpSet.has(x));if(v!=null)p={...p,value:v,base:v,key:'e'+v+'_0',fixed:true}}
   if(p.type==='meso'){const rg=mesoRange();
     if(rg&&(p.value<rg[0]*.5||p.value>rg[1]*3)){const v=fit(p.value,x=>x>=rg[0]&&x<=rg[1]);if(v!=null)p={...p,value:v,key:'m'+v,fixed:true}}}
   return p;
 }
-function mesoRange(){let lo=Infinity,hi=0;for(const m of mobsFor(curMap())){const x=DB&&DB.mobs[m.name];if(x&&x.meso&&x.meso[1]>0){lo=Math.min(lo,x.meso[0]);hi=Math.max(hi,x.meso[1])}}return hi>0?[lo,hi]:null}
+// the meso drops of this map's monsters, only when the database knows them for every monster there (it has none for Drakes)
+function mesoRange(){const map=curMap(),ms=mobsFor(map);if(!DB||!ms.length||ms.some(m=>m.guess))return null;
+  const names=new Set(ms.map(m=>m.name));if(DB.maps[map])for(const [n] of DB.maps[map].mobs)names.add(n);
+  let lo=Infinity,hi=0;for(const n of names){const x=DB.mobs[n];if(!x||!x.meso||!(x.meso[1]>0))return null;lo=Math.min(lo,x.meso[0]);hi=Math.max(hi,x.meso[1])}
+  return [lo,hi]}
 function makeTracker(){
   const T={stack:[],bottom:null,pitch:null,H:null,right:null,fresh:null,maxSlot:7,first:true,lastT:null,id:1,hs:[],rs:[],ps:[],bs:[],fs:[]};
   const med=a=>{const b=[...a].sort((x,y)=>x-y);return b.length?b[b.length>>1]:null};
@@ -630,7 +646,7 @@ function makeTracker(){
     for(const [j,c] of cur)if(j===0||c.int>(T.fresh||0))T.fs.push(c.int);
     T.fs=T.fs.slice(-30);T.fresh=[...T.fs].sort((a,b)=>b-a).slice(0,5).reduce((a,b,i,arr)=>a+b/arr.length,0)||null;
     const F=T.fresh||180,decay=45*dt+12,ub=Math.max(-8,8-12*dt),out=[];   // a line fades by at most `decay` between scans, and has faded by at least -`ub`
-    if(wasFirst){for(const [j,c] of cur)T.stack.push({id:T.id++,slot:j,int:c.int,text:c.text,best:c.text,bestInt:c.int,wd:c.wd,full:c.x1>=T.right-T.H*.8,reads:[],counted:true,miss:0});return out}
+    if(wasFirst){for(const [j,c] of cur){const fu=c.x1>=T.right-T.H*.8&&c.wok!==false;T.stack.push({id:T.id++,slot:j,int:c.int,text:c.text,best:c.text,bestInt:c.int,wd:c.wd,wds:fu?[c.wd]:[],full:fu,reads:[],counted:true,miss:0})}return out}
     // how many new lines pushed the stack up since the last scan? Try every k and keep the one that best explains
     // what is on screen now: each old line k slots further up with the same text, the same width (lines are
     // right-aligned) and a brightness that only ever drops, and a fresh bright line in each of the k new slots.
@@ -644,7 +660,8 @@ function makeTracker(){
         if(!c){const ei=e.int-20*dt;cost+=e.ph?.15:ei>F*.8?.6:ei>F*.65?.3:.1;continue}   // not found: unlikely for a line that should still be bright
         if(e.ph)continue;
         const w=q(c);let sim=Math.max(tsim(e.text,c.text),e.best?tsim(e.best,c.text):0);if(e.lp&&c.cp&&e.lp.key===c.cp.key)sim=Math.max(sim,.8);cost+=(1-sim)*w;
-        if(e.full&&full(c)){const dw=Math.abs(e.wd-c.wd)/H;if(dw>.35)cost+=Math.min(1.2,(dw-.35)*2)*Math.max(c.wd<e.wd?.3:.6,w)}   // a faint line may lose its left end, never gain width
+        if(e.full&&full(c)&&c.wok!==false){let dw=9,nar=false;for(const x of e.wds){const d=Math.abs(x-c.wd)/H;if(d<dw){dw=d;nar=c.wd<x}}   // closest of its last few widths: one bad measure doesn't decide
+          if(dw>.35)cost+=Math.min(1.2,(dw-.35)*2)*Math.max(nar?.3:.6,w)}   // a faint line may lose its left end, never gain width
         if(e.lp&&c.cp){if(e.lp.type!==c.cp.type)cost+=.6*w;else if(e.lp.key!==c.cp.key&&!(c.cp.unk||e.lp.unk))cost+=.35*w}   // two clear reads of one line say the same thing
         const up=c.int-e.int-ub;if(up>0)cost+=Math.min(1.5,up/8);
         const dn=e.int-c.int-decay-(k?10:0);if(dn>0)cost+=Math.min(.8,dn/25)}
@@ -652,8 +669,8 @@ function makeTracker(){
       all.push(k+'='+cost.toFixed(2));if(!best||cost<best.cost-1e-9)best={k,cost}}
     const k=best?best.k:0,ns=[];
     if(MGM.dbg)MGM.dbg.push({t:+now.toFixed(2),k,costs:all,F:Math.round(F),pitch:+T.pitch.toFixed(1),bottom:Math.round(T.bottom),prev:T.stack.map(e=>e.slot+':'+Math.round(e.int)+':'+(e.ph?'?':'')+nrm(e.text).slice(0,14)),cur:[...cur].map(([j,c])=>j+':'+Math.round(c.int)+':'+nrm(c.text).slice(0,14))});
-    const see=(e,c)=>{e.int=c.int;e.text=c.text;e.ph=false;e.miss=0;if(c.cp)e.lp=c.cp;if(c.int>=(e.bestInt||0)){e.best=c.text;e.bestInt=c.int}if(full(c)&&c.int>F*.6){e.wd=c.wd;e.full=true}};
-    for(let j=0;j<k;j++){const c=cur.get(j),e={id:T.id++,slot:j,int:F*.85,text:'',wd:0,full:false,reads:[],counted:false,miss:c?0:1,ph:!c,born:now};if(c)see(e,c);ns.push(e)}
+    const see=(e,c)=>{e.int=c.int;e.text=c.text;e.ph=false;e.miss=0;if(c.cp)e.lp=c.cp;if(c.int>=(e.bestInt||0)){e.best=c.text;e.bestInt=c.int}if(full(c)&&c.int>F*.6&&c.wok!==false){e.wd=c.wd;e.full=true;e.wds.push(c.wd);if(e.wds.length>5)e.wds.shift()}};
+    for(let j=0;j<k;j++){const c=cur.get(j),e={id:T.id++,slot:j,int:F*.85,text:'',wd:0,wds:[],full:false,reads:[],counted:false,miss:c?0:1,ph:!c,born:now};if(c)see(e,c);ns.push(e)}
     for(const e of T.stack){e.slot+=k;const c=cur.get(e.slot);if(c)see(e,c);else e.miss++;
       if(e.miss<3&&e.slot<=T.maxSlot+1)ns.push(e);else if(!e.counted)out.push(...commit(e,true))}
     for(const e of ns){const c=cur.get(e.slot);if(c&&!e.counted&&c.int>=F*.6){const p=c.p||fixAmount(parseMsg(c.text));if(p)e.reads.push({...p,w:Math.max(.05,c.conf/100)*(c.int/F)*(p.weak&&!p.fixed?.5:1)})}}
@@ -668,7 +685,7 @@ function makeTracker(){
     for(const r of e.reads){const o=by.get(r.key)||{n:0,w:0,rs:[]};o.n+=r.unk?.34:1;o.w+=(r.unk?.3:1)*r.w+(r.type==='exp'&&mobExpSet.has(r.value)||r.type==='meso'&&mr&&r.value>=mr[0]*.5&&r.value<=mr[1]*3?1:0);o.rs.push(r);by.set(r.key,o)}
     const top=[...by.values()].sort((a,b)=>b.n-a.n||b.w-a.w)[0];
     if(!force&&top.n<2)return[];
-    e.counted=true;const r=top.rs.sort((a,b)=>b.w-a.w)[0];
+    e.counted=true;const r=top.rs.sort((a,b)=>b.w-a.w)[0];if(r.type==='sys')return[];
     return[r.type==='item'&&r.unk&&DB?{...r,name:'Unreadable item',key:'iunreadable',id:e.id,born:e.born}:{...r,id:e.id,born:e.born}];
   }
   return T;
@@ -705,7 +722,7 @@ const recentVals={exp:[],meso:[]};
 function isOutlier(p){ // a misread like "+231" -> "5842" shows up as one wildly larger value
   const r=recentVals[p.type];if(!r)return false;
   let med=r.length>=5?[...r].sort((a,b)=>a-b)[r.length>>1]:0;
-  if(!med){const rg=p.type==='meso'?mesoRange():null;med=rg?rg[1]:p.type==='exp'&&mobExpSet.size?Math.max(...mobExpSet):0}   // early on: what this map's monsters give
+  if(!med){const rg=p.type==='meso'?mesoRange():null;med=rg?rg[1]:p.type==='exp'&&mobExpFull&&mobExpSet.size?Math.max(...mobExpSet):0}   // early on: what this map's monsters give
   const bad=med>0&&p.value>15*med;
   if(!bad){r.push(p.value);if(r.length>25)r.shift()}
   return bad;
@@ -968,9 +985,10 @@ function parseMobTable(text){
   while((m=re.exec(t))){const name=m[1].trim();if(/^(monster|lv|hp|exp|share)$/i.test(name))continue;out.push({name,lv:+m[2],hp:num(m[3]),exp:num(m[4])})}
   return out;
 }
-function mobsFor(map){let m=store.get(mobKey(map),[]);if(!m.length&&DB&&DB.maps[map])m=DB.maps[map].mobs.map(([n,c])=>{const x=DB.mobs[n]||{};return{name:n,lv:x.lv||0,hp:x.hp||0,exp:x.exp||0,spawns:c}}).filter(x=>x.exp>0);
-  if(!m.length&&map===curMap())m=guessMobs();
-  if(map===curMap())mobExpSet=new Set(m.map(x=>x.exp));return m}
+function mobsFor(map){let m=store.get(mobKey(map),[]),full=m.length>0;
+  if(!m.length&&DB&&DB.maps[map]){const all=DB.maps[map].mobs.map(([n,c])=>{const x=DB.mobs[n]||{};return{name:n,lv:x.lv||0,hp:x.hp||0,exp:x.exp||0,spawns:c}});m=all.filter(x=>x.exp>0);full=m.length>0&&m.length===all.length}
+  if(!m.length&&map===curMap()){m=guessMobs();full=false}
+  if(map===curMap()){mobExpSet=new Set(m.map(x=>x.exp));mobExpFull=full}return m}
 // map not known yet: an EXP amount seen 3+ times that only one monster in the database gives names that monster
 let guessC={n:-1,m:[]};
 function guessMobs(){
