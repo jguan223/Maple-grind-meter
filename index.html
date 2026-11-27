@@ -648,7 +648,8 @@ function makeTracker(){
   // digit is learned from clear reads (a 3-digit amount is about 0.4 of its height wider than a 2-digit one); a read whose digit
   // count does not fit its width ("(+115)" read as "(+1195)") counts for little.
   const amFit=()=>{const g=new Map();for(const a of T.am){const v=g.get(a.n)||[];v.push(a.w);g.set(a.n,v)}
-    const pts=[...g].filter(x=>x[1].length>=2).map(([n,v])=>[n,med(v),v.length]).sort((a,b)=>b[2]-a[2]);if(!pts.length)return null;
+    let pts=[...g].filter(x=>x[1].length>=2).map(([n,v])=>[n,med(v),v.length]).sort((a,b)=>b[2]-a[2]);
+    if(!pts.length)pts=[...g].map(([n,v])=>[n,v[0],1]);if(!pts.length)return null;   // early on, one clear read is enough to start with
     if(pts.length>=2){let sw=0,sn=0,sy=0,snn=0,sny=0;for(const [n,y,c] of pts){sw+=c;sn+=c*n;sy+=c*y;snn+=c*n*n;sny+=c*n*y}
       const d=(sw*sny-sn*sy)/(sw*snn-sn*sn),o=(sy-d*sn)/sw;if(d>T.H*.3&&d<T.H*1.5&&o>0)return{d,o}}
     const [n,y]=pts[0],d=y/(n+1.8);return{d,o:1.8*d}};   // one amount length seen so far: "(+" and ")" together are about 1.8 digits wide
